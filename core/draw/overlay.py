@@ -80,7 +80,7 @@ def apply_sticker_overlay(image: np.ndarray, box: Box) -> np.ndarray:
 
     :return: the image with the sticker applied
     """
-    sticker_path = box.overlay['sticker']
+    sticker_path = box.overlay['path']
     sticker_image = cv2.imread(sticker_path, cv2.IMREAD_UNCHANGED)
     sticker_h, sticker_w, sticker_c = sticker_image.shape
 
@@ -221,13 +221,16 @@ def generate_overlay(overlay_config: dict[str, Any], config: CensorConfig) -> di
             categories = [categories]
 
         image_paths = []
-        for cat in categories:
-            category_dir = constants.stickers_root_path / cat
-            if not category_dir.exists():
-                logger.warning(f"Sticker category {cat} does not exist! Skipping.")
-                continue
+        if len(categories) == 0:
+            image_paths = [p for p in constants.stickers_root_path.rglob("*") if p.suffix.lower() in constants.IMAGE_EXT]
+        else:
+            for cat in categories:
+                category_dir = constants.stickers_root_path / cat
+                if not category_dir.exists():
+                    logger.warning(f"Sticker category {cat} does not exist! Skipping.")
+                    continue
 
-            image_paths.extend([p for p in category_dir.rglob("*") if p.suffix.lower() in constants.image_extensions])
+                image_paths.extend([p for p in category_dir.rglob("*") if p.suffix.lower() in constants.IMAGE_EXT])
 
         if len(image_paths) == 0:
             logger.warning(f"No images found in subdirs {categories}! Returning without sticker.")
