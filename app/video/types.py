@@ -15,7 +15,6 @@ class VideoJob(Job):
         video:          The video to process - path on disk
         job_id:         Unique identifier. Auto-generated if not supplied.
         avi_path:       Path to save the temporary video file.
-        mp4_path:       Path of the final video file.
         override_cache: Whether to ignore the cached elements for this image
         early_exit:     If True, return after the cache write (step 7) and skip
                         image modification, save, and the full ProcessedResult.
@@ -30,4 +29,3 @@ class VideoJob(Job):
     """
     video: VideoInput = None
     avi_path: Path | None = None
-    mp4_path: Path | None = None

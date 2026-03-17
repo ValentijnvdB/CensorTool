@@ -5,8 +5,8 @@ picture_saved_box_version = 2
 
 ptb_hash_len = 4
 
-IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp")
-VID_EXT = (".mp4", ".avi")
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp")
+VID_EXT = (".mp4", ".avi", ".gif")
 
 project_root_dir = Path(__file__).parent.absolute().resolve()
 

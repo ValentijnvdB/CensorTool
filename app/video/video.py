@@ -46,22 +46,23 @@ def censor_videos(
 
         logger.info(f"Censoring video: {vid_name}")
 
+        extension = video_path.suffix
         avi_path: Path = output_dir / (vid_name + '.avi')
-        mp4_path: Path = output_dir / (vid_name + '.mp4')
-        if mp4_path.exists():
+        output_path: Path = output_dir / (vid_name + extension)
+        if output_path.exists():
             if skip_existing:
                 logger.info(f"{vid_name} already exists and skip_existing is True. Skipping...")
                 continue
             suf = 1
-            while mp4_path.exists():
-                mp4_path = output_dir / f'{vid_name}_{suf}.mp4'
+            while output_path.exists():
+                output_path = output_dir / f'{vid_name}_{suf}.{extension}'
                 avi_path = output_dir / f'{vid_name}_{suf}.avi'
                 suf += 1
 
         censor_video(VideoJob(
             video=video_path,
             avi_path=avi_path,
-            mp4_path=mp4_path,
+            output_path=output_path,
             override_cache=override_cache,
             sizes=CONFIG.picture_sizes,
             early_exit=only_analyze,
@@ -70,7 +71,7 @@ def censor_videos(
 
 
 def censor_video(job: VideoJob):
-    mp4_path = Path(job.mp4_path) if isinstance(job.mp4_path, str) else job.mp4_path
+    output_path = Path(job.output_path) if isinstance(job.output_path, str) else job.output_path
     avi_path = Path(job.avi_path) if isinstance(job.avi_path, str) else job.avi_path
 
     # test pre-conditions
@@ -176,43 +177,25 @@ def censor_video(job: VideoJob):
     ##################################################################################
 
     logger.info("Censor applied, re-encoding to final output...")
+
     has_audio = video_file_has_audio(job.video)
 
-    if has_audio:
-        command = command_base + [
-            '-stats',
-            '-i', str(avi_path),
-            '-i', job.video,
-            '-c:a', 'copy',
-            '-c:v', 'libx264',
-            '-crf', '21',
-            '-preset', 'veryfast',
-            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
-            '-map', '0:0',
-            '-map', '1:a',
-            '-shortest',
-            str(mp4_path)
-        ]
+    extension = output_path.suffix
+    if extension == ".gif":
+        write_gif(command_base=command_base,
+                  avi_path=avi_path,
+                  output_path=output_path)
     else:
-        command = command_base + [
-            '-stats',
-            '-i', str(avi_path),
-            '-c:v', 'libx264',
-            '-crf', '21',
-            '-preset', 'veryfast',
-            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
-            str(mp4_path)
-        ]
-
-    logger.debug(command)
-
-    proc2 = sp.Popen(command)
-    proc2.wait()
+        write_video(command_base=command_base,
+                    avi_path=avi_path,
+                    output_path=output_path,
+                    video_path=job.video,
+                    has_audio=has_audio)
 
     if avi_path.exists():
         avi_path.unlink()
 
-    job.result = mp4_path
+    job.result = output_path
     return job
 
 
@@ -370,6 +353,76 @@ def apply_censor(num_frames: int,
     proc.wait()
 
 
+def write_video(
+        command_base: list[str],
+        has_audio: bool,
+        avi_path: Path,
+        video_path: Path,
+        output_path: Path):
+    """Convert avi_path into a video (format depends on output_path.suffix)"""
+
+    if has_audio:
+        command = command_base + [
+            '-stats',
+            '-i', str(avi_path),
+            '-i', str(video_path),
+            '-c:a', 'copy',
+            '-c:v', 'libx264',
+            '-crf', '21',
+            '-preset', 'veryfast',
+            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+            '-map', '0:0',
+            '-map', '1:a',
+            '-shortest',
+            str(output_path)
+        ]
+    else:
+        command = command_base + [
+            '-stats',
+            '-i', str(avi_path),
+            '-c:v', 'libx264',
+            '-crf', '21',
+            '-preset', 'veryfast',
+            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
+            str(output_path)
+        ]
+
+    logger.debug(command)
+
+    proc2 = sp.Popen(command)
+    proc2.wait()
 
 
+def write_gif(
+        command_base: list[str],
+        avi_path: Path,
+        output_path: Path):
+    """Convert avi_path into a GIF."""
+
+    palette_file = constants.temp_path / "palette.png"
+
+    # first generate a palette for a nicer end result
+    command = command_base + [
+        '-i', str(avi_path),
+        '-vf', 'fps=15,scale=480:-1:flags=lanczos,palettegen', str(palette_file)
+    ]
+
+    proc2 = sp.Popen(command)
+    proc2.wait()
+
+    # convert the video
+    command = command_base  + [
+        '-i', str(avi_path),
+        '-i', str(palette_file),
+        '-filter_complex', 'fps=12,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse',
+        '-loop', '0',
+        str(output_path)
+    ]
+
+    proc3 = sp.Popen(command)
+    proc3.wait()
+
+    # clean up
+    if palette_file.exists():
+        palette_file.unlink()
 
