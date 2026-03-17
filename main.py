@@ -64,7 +64,7 @@ def parse_input_path(input_path: Path, extension_filter: list[str]) -> list[Path
 
 
 def start_image_censor(input_path: Path, output_path: Path, **kwargs):
-    from app.image import censor_images # , analyze_images
+    from app.image import censor_images
 
     logger.info("Censoring images")
 
@@ -210,7 +210,8 @@ def main():
         censor_all(input_path, output_path,
                     override_cache=args.override_cache,
                     skip_existing=args.skip_existing,
-                    only_analyze=args.only_analyze)
+                    only_analyze=args.only_analyze,
+                    censor_config=args.censor_config)
     elif args.mode in ['http', 'https']:
         serve_http(args.host, args.port, args.ssl_cert, args.ssl_key)
     else:
