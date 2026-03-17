@@ -9,6 +9,7 @@ from typing_extensions import deprecated
 
 import constants
 from app.config import load_config
+from core import construct_censor_config, CensorConfig
 from utils.hash_utils import hash_bytes
 
 from server.server_config import UPLOAD_DIR
@@ -106,33 +107,20 @@ def get_image_from_json(as_json: dict) -> tuple[bytes, Path]:
     return image, path
 
 
-@deprecated("Use get_image_from_json instead")
-async def get_image_from_request(request) -> tuple[bytes, Path]:
+async def read_request(request) -> tuple[bytes, Path, CensorConfig|None, str]:
     if request.content_type == 'application/json':
-        as_json = await request.json()
-
-        image, path = get_image_from_json(as_json)
-
-    else:
-        reader = await request.multipart()
-        image, path = await read_uploaded_image(reader)
-
-    with open(path, 'wb') as f:
-        f.write(image)
-
-    return image, path
-
-
-async def read_request(request) -> tuple[bytes, Path]:
-    if request.content_type == 'application/json':
-        as_json = await request.json()
+        as_json: dict = await request.json()
         image_bytes, image_path = get_image_from_json(as_json)
-        if 'box_config' in as_json:
-            censor_boxes = as_json['box_config']
-            logger.debug(censor_boxes)
-            load_config(censor_boxes)
 
-        return image_bytes, image_path
+        expected_response = as_json.get('expected_response', 'base64')
+
+        censor_config = None
+        if 'config' in as_json:
+            censor_config = as_json['config']
+            logger.debug(censor_config)
+            censor_config = construct_censor_config(censor_config)
+
+        return image_bytes, image_path, censor_config, expected_response
 
     else:
         raise ValueError("Only json type is supported.")
