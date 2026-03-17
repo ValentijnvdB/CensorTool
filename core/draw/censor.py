@@ -26,7 +26,8 @@ def generic_cv_manipulation(apply_operation_func,
 
     # Get bounding box of the polygon to optimize processing
     min_x, min_y, max_x, max_y = shape.bounds
-    min_x, min_y, max_x, max_y = int(min_x), int(min_y), int(max_x), int(max_y)
+    min_x, min_y, = max(int(min_x), 0), max(int(min_y), 0),
+    max_x, max_y = int(max_x), int(max_y)
 
     # Extract region of interest (ROI)
     roi = image[min_y:max_y, min_x:max_x]
@@ -76,7 +77,7 @@ def blur_image(image: np.ndarray, polygon: Polygon, blur_strength: int) -> np.nd
     if blur_strength % 2 == 0:
         blur_strength += 1
 
-    def operation(roi):
+    def operation(roi: np.ndarray):
         # Apply Gaussian blur to the ROI
         return cv2.GaussianBlur(roi, [blur_strength, blur_strength], 0)
 
