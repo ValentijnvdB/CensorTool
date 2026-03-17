@@ -1,0 +1,14 @@
+aiohttp
+aiohttp_cors
+loguru
+mss
+numpy
+onnxruntime_gpu
+opencv_python
+pyautogui
+PyYAML
+Requests
+Shapely
+tqdm
+typing_extensions
+ultralytics

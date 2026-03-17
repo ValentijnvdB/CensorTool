@@ -1,0 +1,108 @@
+###################################################################
+#### If you have an Nvidia GPU you can turn on GPU acceleration.
+### Make sure you have read the instruction in the readme.
+gpu_enabled: false
+
+###################################################################
+#### Image sizes. The images are resized to reduce processing time.
+#### The values in picture_sizes determine to what size.
+#### Multiple values means each image is run multiple times, the runs are then combined.
+#### Different values may be best for different photos.
+####
+#### [ 1280 ]: recommended, good performance and speed tradeoff
+#### [ 640 ]:  much faster, decent performance when models fills the frame
+#### [ 2560 ]: slower, better for collage or big group photos.
+####
+#### [ 1280, 2560 ]: combine the two, may be safer than either alone
+####
+#### [ 0 ]: not recommended, uses photos as-is to neural net.
+picture_sizes: [1280]
+
+##################################################################
+#### Video censor does not run the model on every single frame of a
+#### video.  Instead, it runs a few times per second, and then
+#### uses those to censor the whole video.  Set how many times
+#### per second the model runs here. More means better accuracy,
+#### but slower. 5 is a good sweet spot.  You can drop to 3 if 5
+#### is too slow, but you should probably increase the time_safety values
+#### in the censoring box_config if you do. 15 is a good balance.
+video_censor_fps: 15
+
+##################################################################
+#### Live censor works by capturing screenshots from one
+#### part of your screen and displaying it censored on another
+#### part of your screen.  Here, configure what part of the screen
+#### holds the uncensored content. Works best if you have two displays.
+live_cap_monitor: 0  # 0 means 'all monitors'.  You can almost certainly leave this as 0.
+live_cap_top: 0
+live_cap_left: 0
+live_cap_height: 1080
+live_cap_width: 1920
+
+### Vision FPS counter
+live_show_fps: false
+
+### Color for the replacement cursor for live censor, in RGB
+live_cursor_color: [168, 93, 253]
+
+# Config for the 'ai_remove' censor style.
+# Comfy base url
+comfy_base_url: "http://localhost:8188/"
+
+# Comfy-ui Workflow. (Not provided with the tool, so make sure you add one yourself)
+comfy_workflow: "./data/assets/workflow.json"
+
+################################################
+# Input Delete Probability
+#### If you set this to 1, all uncensored files
+#### will be deleted after censoring.  If you set
+#### this to a number between 0 and 1, there will
+#### be a random chance of the input being deleted.
+#### For example, if you set it to 0.7, for each
+#### uncensored file, there is a 70% chance it will
+#### be deleted.
+#### I ***HIGHLY*** recommend testing censoring
+#### with this set to zero first.  Using this
+#### setting is dangerous.  The tool will try
+#### to verify that the file was successfully
+#### censored before deleting, but if there is
+#### some issue with the image or video writing
+#### process, the tool might not know.
+#### SET THIS AT YOUR OWN RISK.
+#### DON'T COME CRYING IF YOUR FILE WAS DELETED
+input_delete_probability: 0
+
+########################################################################
+############################### ADVANCED ###############################
+########################################################################
+# What model should the detection of all_polygons be done. Slower models are more accurate.
+# Options: 'fastest', 'faster', 'fast', 'medium-fast', 'medium', 'medium-slow', 'slow', 'slower', 'slowest'
+body_detection_model: 'fastest'
+
+# If you have more than one graphics card, and you care which one
+# runs the model change this. You probably don't need to change this
+cuda_device_id: 0
+
+# This determines how various censor styles deal with overlap
+# You probably don't need to change this
+censor_overlap_strategy:
+    'blur': 'single-pass'
+    'bar': 'none'
+    'pixel': 'single-pass'
+    'debug': 'none'
+
+# this determines how pixel and blur are applied
+# "scale" with image size.  'feature' is recommended
+censor_scale_strategy: 'feature'  # scales N->1 by min feature dimension, with a 100 base (so a 200x400 feature would be 2N->1)
+# censor_scale_strategy: 'image' # scales N->1 by max image dimension, with 1000 base (so a 2000x1200 image would be 2N->1)
+# censor_scale_strategy: 'none' # uses N -> 1 reduction
+
+# this determines how much delay is present in live censor
+# only relevant if you use 'precise' mode.
+# you may need to adjust this for performance reasons
+live_delay: 0.2  # seconds
+
+# should live censor use image interpolation?
+# setting this to true may make videos in live censor smoother, but can cause ghosting.
+live_interpolate_frames: false
+

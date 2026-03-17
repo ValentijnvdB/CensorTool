@@ -1,0 +1,87 @@
+from queue import Queue
+from threading import Event, Thread
+
+import cv2
+
+from core import CensorConfig
+from app.config import CONFIG, censor_config_has_changed, load_censor_config_from_file_w_hash
+
+import constants
+from core import ProcessedResult
+
+from .censor import censor_loop
+from .detect import detect_loop
+from .quick import quick_vision
+
+
+####################################################################################################################
+# MODES: 'quick', 'precise'
+# 'Quick' runs the censor pipeline on each frame separately, making it much quicker,
+# but if it could happen that some stuff is visible if the models does not detect a feature for a few frames
+# 'Precise' solves this keeping track of the boxes and
+# applies the time_safety property to keep the boxes for some time when the feature is not detected anymore
+# at the cost of increased latency
+####################################################################################################################
+
+def start_live_censor(mode: str = 'quick'):
+    """
+    Start the live censoring mode
+    """
+    window_name = 'Live Censoring'
+    cv2.startWindowThread()
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, CONFIG.live.cap_width, CONFIG.live.cap_height)
+
+    init_image = cv2.imread(constants.init_screen_image, cv2.IMREAD_GRAYSCALE)
+    init_image = cv2.resize(init_image, (CONFIG.live.cap_width, CONFIG.live.cap_height))
+    cv2.imshow(window_name, init_image)
+
+    stop_event = Event()
+
+    if mode == "quick":
+        _start_quick(stop_event, window_name)
+    elif mode == "precise":
+        _start_precise(stop_event, window_name)
+    else:
+        raise Exception(f"Invalid mode: {mode}")
+
+
+
+def reload_censor_config(censor_config: CensorConfig|None, file_hash: str = '', force: bool = False) -> tuple[CensorConfig, str, bool]:
+    changed = False
+    if force or censor_config is None or censor_config_has_changed(file_hash):
+        censor_config, file_hash = load_censor_config_from_file_w_hash()
+        censor_config.enable_overlays = False
+        censor_config.merge_overlapping_borders = False
+        censor_config.merge_overlapping_censor_box = False
+        changed = True
+
+    return censor_config, file_hash, changed
+
+
+def _start_precise(stop_event: Event, window_name: str):
+    message_queue: Queue[ProcessedResult] = Queue()
+
+    detect_thread = Thread(target=detect_loop,
+                           args=(stop_event, message_queue),
+                           daemon=True)
+
+    detect_thread.start()
+
+    try:
+        censor_loop(stop_event, message_queue, reload_censor_config, window_name)
+
+    except KeyboardInterrupt:
+        print("Interrupted...")
+        stop_event.set()
+        detect_thread.join()
+
+
+def _start_quick(stop_event: Event, window_name: str):
+
+    try:
+        quick_vision(stop_event, reload_censor_config, window_name)
+
+    except KeyboardInterrupt:
+        print("Interrupted...")
+        stop_event.set()

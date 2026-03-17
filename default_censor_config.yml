@@ -1,0 +1,171 @@
+### Features to censor
+### Put a '#' in front of a line to turn it off.
+features_to_censor: [
+    'exposed_anus',
+    'exposed_vulva',
+    'exposed_breast',
+    'exposed_buttocks',
+#    'covered_vulva',
+#    'covered_breast',
+#    'covered_buttocks',
+    'face_masc',
+    'face_femme',
+#    'exposed_belly',
+#    'covered_belly',
+#    'exposed_feet',
+#    'covered_feet',
+#    'exposed_armpits',
+    'exposed_penis',
+#    'exposed_chest',
+#    'eyes_femme',
+    # 'eyes_masc',
+]
+
+# Merge overlapping censor boxes. Recommended to leave this 'true'.
+merge_overlapping_censor_boxes: true
+
+# Merge overlapping borders into one. If the borders have different colors and thickness one is chosen randomly.
+merge_overlapping_borders: true
+
+# apply an inverse censor, even if no features with the inverse censor attribute are detected.
+force_inverse_censor: false
+
+# Overlay master switch. Set to false to turn them off.
+enable_overlays: false
+
+# Enable a small watermark
+enable_watermark: False
+
+##############################################################################################################
+################################################ CENSOR BOXES ################################################
+##############################################################################################################
+# Below you will be able to define how each feature should be censored, we call this a 'censor box'.
+# First, you'll define the default censor box. Then, you'll define overrides per feature.
+# For any setting not in the override, the default value is used. Let's first go through some of the settings.
+
+################################ CENSOR_STYLE ################################
+# The available censor styles are: bars, pixelate, blur, or ai_remove (comfy_ui required).
+# The censor style is defined as:
+# censor_style:
+#       type: <type>
+#       <settings>
+# Each censor style has their own settings.
+#-------------------- BAR --------------------
+# Solid colored bar.
+# censor_style:
+#   type: bar
+#   color: [int, int, int]  # color in RGB format in range [0, 255]
+#-------------------- BLUR --------------------
+# Blur the area.
+# censor_style:
+#   type: blur
+#   strength: int  # how aggressive should we blur
+#-------------------- PIXELATE --------------------
+# Pixelate the area.
+# censor_style:
+#   type: pixel
+#   factor: int  # By how much we should reduce the number of pixels.
+#                # 10 means that a 200x400 pixel region is pixelated to 20x40 pixels.
+#-------------------- AI_REMOVE --------------------
+# Run a comfy_ui workflow on the image, for example to add clothing.
+# No options. The workflow and base_url are defined in the main config file (config.yml)
+# censor_style:
+#   type: ai_remove
+
+
+################################ OVERLAY ################################
+# Use overlays like text or stickers.
+# These are placed on top of certain features.
+#-------------------- NONE --------------------
+# Will not use any overlay
+# overlay: null
+#-------------------- STICKERS --------------------
+# Stickers are small images. Place them in ./data/stickers/<subdir>. In the example below 'plants' is a <subdir>.
+# Place any plant related stickers in that folder and the program will pick one at random.
+# Multiple subdirs can be provided. If empty, a sticker is chosen from all available stickers.
+# overlay:
+#   type: sticker
+#   probability: 0.5  # the probability a sticker is place. 0 is never, 1 is always
+#   categories: ['plants', 'misc']
+# or to pick any sticker:
+# overlay:
+#   type: sticker
+#   categories: []
+#-------------------- TEXT --------------------
+# Text will place a random value from the value list on a feature. Some options are optional
+# overlay:
+#   type: text
+#   values: ['Hidden', 'Censored']
+#   probability: 0.5  # the probability a sticker is place. 0 is never, 1 is always
+#   color: [int, int, int]  # color in RGB format in range [0, 255] [optional]
+#   thickness: int          # thickness of the letters [optional]
+#   font_scale: float       # larger means larger text [optional]
+
+
+################################ BORDER ################################
+# Add a colored border around the censored area. null to turn off.
+# border: null   # no border
+# border:
+#    color: [int, int, int]  # color in RGB format in range [0, 255] [optional]
+#    thickness: int          # thickness of the border
+
+# The remainder of the settings are explained below.
+
+
+# If inverse censor is used, the censor_type of the features with inverse is overridden by the censor_box below.
+inverse_censor_style:
+    type: blur
+    blur_strength: 51
+
+################################ DEFAULT CENSOR BOX ################################
+# All features will be as censored according to default_censor_config unless an override is provided below.
+default_censor_config:
+    censor_style:
+        type: bar
+        color: [0, 0, 0]
+    overlay: null
+
+    # Add extra space to the width of the censor box, just to be safe. 0.10 adds 10% to the width.
+    width_area_safety: 0.1
+
+    # Add extra space to the height of the censor box, just to be safe.0.10 adds 10% to the height.
+    height_area_safety: 0.1
+
+    # Keep the censor on screen a little longer after the feature is no longer detected.
+    # This can help if the model does not detect a feature while it is still on screen.
+    # Only affects 'video' censor and 'live' censor on 'precise' mode.
+    # 0.3 will keep censored area 0.3 seconds longer on screen.
+    time_safety: 0.1
+
+    # Border outline. Will put a border around the censored area.
+    border: null
+
+    # Censor everything else and keep the feature visible
+    inverse: false
+
+    # The minimum confidence that the datatypes needs to have that it detected a certain feature before it is censored
+    # Lower values causes pieces of the image to be censored when there is nothing that needs censoring.
+    # Higher values causes some features that need to be censored to not be censored.
+    min_prob: 0.45
+
+    # the shape of the censor area: ellipse, circle, rectangle, default
+    shape: default
+
+    # Whether the found censor box (which are rectangles by default) should be intersected with the shape of the human.
+    # This can create nicer censors, but only works sometimes as the faster models are not very accurate.
+    intersect_human: false
+
+
+################################ OVERRIDES ################################
+# Feature Overrides: to override any of the above defaults for a specific feature.
+# If some setting is missing in the override, the default value is used.
+feature_overrides:
+    face_femme:
+        censor_style:
+            type: pixel
+            factor: 20
+
+    face_masc:
+        censor_style:
+            type: pixel
+            factor: 20
