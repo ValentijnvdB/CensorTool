@@ -20,6 +20,11 @@ def _process_one(job: Job, gpu_queue: Queue[GPURequest]) -> Job:
     """
     times = [('start', time.perf_counter_ns())]
 
+    def cancel_job():
+        job.success = False
+        job.time_taken = times
+        return job
+
     output_path = Path(job.output_path) if isinstance(job.output_path, str) else job.output_path
 
     if job.image is None:
@@ -33,6 +38,8 @@ def _process_one(job: Job, gpu_queue: Queue[GPURequest]) -> Job:
             image = load_image(job.image)
 
         times.append( ('load_image', time.perf_counter_ns()) )
+        if job.cancelled.is_set():
+            return cancel_job()
 
         # --- Step 2: cache check + light preprocessing ---
         cache_base_dir: Path = job.cache_base_dir if job.cache_base_dir is not None else constants.image_cache_path
@@ -46,12 +53,16 @@ def _process_one(job: Job, gpu_queue: Queue[GPURequest]) -> Job:
             need_bodies.append(c.bodies is None)
 
         times.append( ('check_cache', time.perf_counter_ns()) )
+        if job.cancelled.is_set():
+            return cancel_job()
 
         # --- Step 3: prepare image variants (only if we need inference) ---
         if any(need_features) or any(need_bodies):
             adj_images, scales = prepare_image_variants(image, job.sizes)
 
             times.append( ('prepare image', time.perf_counter_ns()) )
+            if job.cancelled.is_set():
+                return cancel_job()
 
         # --- Steps 4–5: GPU inference (skipped if fully cached) ---
             data = PreprocessedData(adj_images=adj_images, scales=scales)
@@ -66,6 +77,8 @@ def _process_one(job: Job, gpu_queue: Queue[GPURequest]) -> Job:
             bodies = gpu_result.raw_bodies
 
             times.append( ('run models', time.perf_counter_ns()) )
+            if job.cancelled.is_set():
+                return cancel_job()
 
         # --- Step 6: post-process and Step 7 write to cache---
             cached = postprocess(image=image,
@@ -93,6 +106,9 @@ def _process_one(job: Job, gpu_queue: Queue[GPURequest]) -> Job:
             job.success = True
             job.time_taken = times
             return job
+
+        if job.cancelled.is_set():
+            return cancel_job()
 
         # --- Steps 8–9: modify image + write to disk ---
         modified_image = apply_censor(image, cached, job.output_path, job.config)

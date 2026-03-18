@@ -32,24 +32,30 @@ class Job:
     Submitted by the caller; travels through the whole pipeline unchanged.
 
     Attributes:
-        image:          The image to process - path on disk or a loaded np.ndarray.
-        job_id:         Unique identifier. Auto-generated if not supplied.
-        output_path:    Where to write the result image. None → don't write.
-        override_cache: Whether to ignore the cached elements for this image
-        early_exit:     If True, return after the cache write (step 7) and skip
-                        image modification, save, and the full ProcessedResult.
-                        The returned ProcessedResult will carry the unmodified
-                        original image plus features/bodies instead.
-        sizes:          The sizes to run the image at.
-        timestamp:      The timestamp this image was taken at. May be left empty.
-        data:           Extra data, will not be touched by the pipeline.
-        success:        Set by the pipeline after processing. None = not yet done.
-        error:          Populated on failure; None on success.
-        result:         The ProcessedResult, set on completion.
+        image:              The image to process - path on disk or a loaded np.ndarray.
+        job_id:             Unique identifier. Auto-generated if not supplied.
+        output_path:        Where to write the result image. None → don't write.
+        override_cache:     Whether to ignore the cached elements for this image
+        early_exit:         If True, return after the cache write (step 7) and skip
+                            image modification, save, and the full ProcessedResult.
+                            The returned ProcessedResult will carry the unmodified
+                            original image plus features/bodies instead.
+        skip_cache_write:   If set, does not write the intermediate results to the cache.
+        cache_base_dir:     The base directory for caching intermediate results.
+        sizes:              The sizes to run the image at.
+        timestamp:          The timestamp this image was taken at. May be left empty.
+        config:             The censor config to use.
+        cancelled:          If this event is set, the job is canceled and the job is returned as is..
+        data:               Extra data, will not be touched by the pipeline.
+        success:            Set by the pipeline after processing. None = not yet done.
+        error:              Populated on failure; None on success.
+        stacktrace:         In case of an error, the stacktrace will be put here.
+        time_taken:         The time taken to finish the job.
+        result:             The ProcessedResult, set on completion.
     """
     image: ImageInput = None
-    output_path: Path | str | None = None
     job_id: Any = field(default_factory=lambda: str(uuid.uuid4()))
+    output_path: Path | str | None = None
 
     override_cache: bool = False
     early_exit: bool = False
