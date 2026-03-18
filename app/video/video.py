@@ -4,14 +4,14 @@ from concurrent.futures._base import wait, FIRST_COMPLETED
 
 from tqdm import tqdm
 
-from app.config import CONFIG, load_censor_config_from_file
+from ..config import CONFIG, load_censor_config_from_file
 
 from .helpers import *
 from .types import VideoJob
 from .utils import video_file_has_audio
-
 from . import ffmpeg
-from ..image.image import ImagePipeline
+
+from core import ImagePipeline
 
 
 

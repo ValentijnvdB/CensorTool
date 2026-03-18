@@ -2,7 +2,7 @@ from concurrent.futures import Future
 
 from tqdm import tqdm
 
-from app.config import CONFIG, load_censor_config_from_file
+from ..config import CONFIG, load_censor_config_from_file
 
 from core import *
 

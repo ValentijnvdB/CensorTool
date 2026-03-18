@@ -8,14 +8,11 @@ import numpy as np
 import pyautogui
 from loguru import logger
 
-from core import models, draw, process_multiple_passes, censor_image_from_boxes, Box
+from core import models, draw, process_multiple_passes, censor_image_from_boxes, Box, ProcessedResult
 
-from app.config import CONFIG
+from ..config import CONFIG
 
-from core import ProcessedResult
-
-from . import utils
-from .utils import get_next_frame, push_frame
+from .utils import get_next_frame, push_frame, interpolate_images
 
 
 def censor_loop(stop_event: Event, message_queue: Queue[ProcessedResult], reload_config, input_device: cv2.VideoCapture|None, output_device):
@@ -89,7 +86,7 @@ def censor_loop(stop_event: Event, message_queue: Queue[ProcessedResult], reload
                 continue
 
             if CONFIG.live.interpolate_frames:
-                frame = utils.interpolate_images(
+                frame = interpolate_images(
                     image_buffer[0][1], image_buffer[0][0], image_buffer[1][1], image_buffer[1][0],
                     frame_timestamp
                 )

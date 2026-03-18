@@ -13,7 +13,7 @@ from loguru import logger
 
 from core import CensorConfig, ImagePipeline, Job, ImageInput, ProcessedResult, draw
 
-from app.config import CONFIG
+from ..config import CONFIG
 
 from .utils import get_next_frame, push_frame
 

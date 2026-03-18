@@ -7,7 +7,6 @@ from loguru import logger
 
 import core
 from utils import hash_utils
-from core import config, CensorConfig
 
 
 @dataclass
@@ -39,7 +38,7 @@ class Config:
     censor_overlap_strategy: dict = field(default_factory=lambda: {})
     censor_scale_strategy: dict = field(default_factory=lambda: {})
 
-    default_censor_config: CensorConfig = field(default_factory=lambda: DEFAULT_CENSOR_CONFIG)
+    default_censor_config: core.CensorConfig = field(default_factory=lambda: DEFAULT_CENSOR_CONFIG)
 
     debug: bool = field(default=False)
 
@@ -47,7 +46,7 @@ class Config:
     comfy_workflow: str|Path =  "./data/assets/workflow.json"
 
 
-def load_censor_config_from_file(path: Path | str = None) -> CensorConfig:
+def load_censor_config_from_file(path: Path | str = None) -> core.CensorConfig:
     """
     Read and construct a CensorConfig object from a YAML file.
 
@@ -83,10 +82,10 @@ def load_censor_config_from_file(path: Path | str = None) -> CensorConfig:
                 if 'comfy_workflow' not in style:
                     style['comfy_workflow'] = CONFIG.comfy_workflow
 
-    return config.construct_censor_config(default_config)
+    return core.config.construct_censor_config(default_config)
 
 
-def load_censor_config_from_file_w_hash(path: Path | str = None) -> tuple[CensorConfig, str]:
+def load_censor_config_from_file_w_hash(path: Path | str = None) -> tuple[core.CensorConfig, str]:
     if path is None:
         path = _default_censor_config_path
 
@@ -111,7 +110,7 @@ def load_config(path: Path | str = None, debug: bool = False) -> Config:
             lcc[nkey] = value
             del config_dict[key]
 
-    config.set_general_config(
+    core.config.set_general_config(
         gpu_enabled=config_dict.pop('gpu_enabled'),
         cuda_device_id=config_dict.pop('cuda_device_id'),
         body_detection_model=config_dict.pop('body_detection_model'),
@@ -136,7 +135,7 @@ def censor_config_has_changed(prev_hash: str, path: Path | str = None) -> Config
 _default_censor_config_path = Path('./default_censor_config.yml')
 
 # Public variables
-DEFAULT_CENSOR_CONFIG: CensorConfig|None = None
+DEFAULT_CENSOR_CONFIG: core.CensorConfig|None = None
 CONFIG: Config|None = None
 
 

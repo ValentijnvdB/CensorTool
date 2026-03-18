@@ -2,7 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from ..video import ffmpeg
+from . import ffmpeg
 
 
 def video_file_has_audio(video_path: Path) -> bool:

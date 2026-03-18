@@ -5,11 +5,10 @@ from typing import Any
 import cv2
 from loguru import logger
 
-from core import CensorConfig
-from app.config import CONFIG, censor_config_has_changed, load_censor_config_from_file_w_hash
-
 import constants
-from core import ProcessedResult
+
+from core import CensorConfig, ProcessedResult
+from ..config import CONFIG, censor_config_has_changed, load_censor_config_from_file_w_hash
 
 from .censor import censor_loop
 from .detect import detect_loop

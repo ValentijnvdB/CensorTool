@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import pyautogui
 
-from app.config import CONFIG
+from ..config import CONFIG
 
 
 def shm_name_for_screenshot(size):

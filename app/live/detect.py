@@ -7,7 +7,7 @@ from loguru import logger
 
 from core import ProcessedResult, ImageInput, Job, ImagePipeline
 
-from app.config import CONFIG
+from ..config import CONFIG
 
 from .utils import get_next_frame
 
