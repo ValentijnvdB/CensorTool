@@ -1,7 +1,9 @@
 import hashlib
+import time
 import traceback
 from concurrent.futures import FIRST_COMPLETED, wait, Future
 from threading import Event
+from typing import Any
 
 import cv2
 import numpy as np
@@ -12,19 +14,43 @@ from core import CensorConfig, ImagePipeline, Job, ImageInput, ProcessedResult
 
 from app.config import CONFIG
 
-from .screenshot import get_next_image
+from .screenshot import get_screenshot
 
 
-def quick_live_censor(stop_event: Event, reload_config, window_name: str, device_id: int):
+def get_next_image(vid_cap: cv2.VideoCapture = None) -> tuple[float, np.ndarray]:
+    if vid_cap is None:
+        return get_screenshot()
+
+    ret, frame = vid_cap.read()
+    if not ret:
+        raise RuntimeError('Failed to get next image from video capture')
+
+    return time.monotonic(), frame
+
+
+def _push_frame(device, frame: np.ndarray):
+
+    if isinstance(device, str):
+        cv2.imshow(device, frame)
+    else:
+        device.send(frame)
+        device.sleep_until_next_frame()
+
+
+def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_cap: cv2.VideoCapture|None):
+    """
+    The main live censor function. Used for both 'live' and 'webcam' mode.
+
+    :param stop_event: Stops when stop_event is set.
+    :param reload_config: the function that reloads the censor config
+    :param output_device: the output device. if str, will output to cv2 window, otherwise use pyvirtualcam.Camera.
+    :param vid_cap: the video capture device. if None, will take screenshots.
+    """
     prev_image_sum = 0
     prev_image_hash = 0
     previous_censored_screenshots: np.ndarray = None
 
     censor_config, file_hash, _ = reload_config(None, '', force=True)
-
-    vid_cap = None
-    if device_id >= 0:
-        vid_cap = cv2.VideoCapture(device_id)
 
     with ImagePipeline(max_workers=4) as pipeline:
         futures: dict[float, Future] = {}
@@ -53,6 +79,7 @@ def quick_live_censor(stop_event: Event, reload_config, window_name: str, device
 
         i = 0
         force_reload = False
+        errored = False
         while not stop_event.is_set():
 
             try:
@@ -137,7 +164,7 @@ def quick_live_censor(stop_event: Event, reload_config, window_name: str, device
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 
-                cv2.imshow(window_name, frame)
+                _push_frame(output_device, frame)
                 i += 1
                 errored = False
             except Exception as e:

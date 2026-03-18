@@ -1,5 +1,6 @@
 from queue import Queue
 from threading import Event, Thread
+from typing import Any
 
 import cv2
 
@@ -23,27 +24,51 @@ from .quick import quick_live_censor
 # at the cost of increased latency
 ####################################################################################################################
 
-def start_live_censor(mode: str = 'quick', device_id: int = -1):
+def start_live_censor(mode: str, device_id: int, to_v_cam: bool, width: int, height: int, fps: int):
     """
     Start the live censoring mode
     """
     window_name = 'Live Censoring'
-    cv2.startWindowThread()
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, CONFIG.live.cap_width, CONFIG.live.cap_height)
-
-    init_image = cv2.imread(constants.init_screen_image, cv2.IMREAD_GRAYSCALE)
-    init_image = cv2.resize(init_image, (CONFIG.live.cap_width, CONFIG.live.cap_height))
-    cv2.imshow(window_name, init_image)
 
     stop_event = Event()
 
-    if mode == "quick":
-        _start_quick(stop_event, window_name, device_id)
-    elif mode == "precise":
-        _start_precise(stop_event, window_name)
+    # setup output device
+    if to_v_cam:
+        from pyvirtualcam import Camera, PixelFormat
+        output_device = Camera(width=width, height=height, fps=fps, fmt=PixelFormat.BGR)
     else:
-        raise Exception(f"Invalid mode: {mode}")
+        cv2.startWindowThread()
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, CONFIG.live.cap_width, CONFIG.live.cap_height)
+
+        init_image = cv2.imread(constants.init_screen_image, cv2.IMREAD_GRAYSCALE)
+        init_image = cv2.resize(init_image, (CONFIG.live.cap_width, CONFIG.live.cap_height))
+        cv2.imshow(window_name, init_image)
+        output_device = window_name
+
+    # setup input device
+    input_device = None
+    if device_id >= 0:
+        input_device = cv2.VideoCapture(device_id)
+
+    try:
+        if mode == "quick":
+            _start_quick(stop_event, output_device, input_device)
+        elif mode == "precise":
+            _start_precise(stop_event, window_name)
+        else:
+            raise Exception(f"Invalid mode: {mode}")
+    except Exception as e:
+        raise e
+    finally:
+        # close everything gracefully
+        if to_v_cam:
+            output_device.close()
+        else:
+            cv2.destroyAllWindows()
+
+        if input_device is not None:
+            input_device.release()
 
 
 
@@ -77,10 +102,9 @@ def _start_precise(stop_event: Event, window_name: str):
         detect_thread.join()
 
 
-def _start_quick(stop_event: Event, window_name: str, device_id: int):
-
+def _start_quick(stop_event: Event, output_device: Any, input_device: cv2.VideoCapture|None):
     try:
-        quick_live_censor(stop_event, reload_censor_config, window_name, device_id)
+        quick_live_censor(stop_event, reload_censor_config, output_device, input_device)
 
     except KeyboardInterrupt:
         print("Interrupted...")

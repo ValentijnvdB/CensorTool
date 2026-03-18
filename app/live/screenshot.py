@@ -9,16 +9,7 @@ from core import models, draw
 from app.config import CONFIG
 
 
-def get_next_image(vid_cap: cv2.VideoCapture = None) -> tuple[float, np.ndarray]:
 
-    if vid_cap is None:
-        return get_screenshot()
-
-    ret, frame = vid_cap.read()
-    if not ret:
-        raise RuntimeError('Failed to get next image from video capture')
-
-    return time.monotonic(), frame
 
 
 def get_screenshot():

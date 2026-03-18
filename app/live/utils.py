@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 
 from app.config import CONFIG
 
@@ -25,3 +26,6 @@ def vision_adj_img_size(max_length):
         return max_length, max_length
     else:
         return CONFIG.live.cap_height, CONFIG.live.cap_width
+
+
+

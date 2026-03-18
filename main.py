@@ -125,9 +125,9 @@ def create_dirs():
     makedirs(constants.model_root, exist_ok=True)
 
 
-def start_live_censor(mode: str, device_id: int):
+def start_live_censor(mode: str, device_id: int, use_vcam: bool, vcam_width: int, vcam_height, vcam_fps:int):
     from app.live import start_live_censor
-    start_live_censor(mode, device_id)
+    start_live_censor(mode, device_id, use_vcam, vcam_width, vcam_height, vcam_fps)
 
 
 def serve_http(host, port, ssl_file, ssl_key):
@@ -157,22 +157,29 @@ def main():
                         default='./default_censor_config.yml', help='Path to the censor config file.')
 
     # live & webcam mode
-    parser.add_argument('--live-mode', default='quick', type=str, help='Live mode (quick or precise)')
-    parser.add_argument('--device', default=-1, type=int, help='Device to use (only used for live webcam censor).')
+    lw_parser = parser.add_argument_group(title='Live & Webcam arguments')
+    lw_parser.add_argument('--live-mode', default='quick', type=str, help='Live mode (quick or precise)')
+    lw_parser.add_argument('--device', default=-1, type=int, help='Device to use (only used for live webcam censor).')
+    lw_parser.add_argument('--vcam', action='store_true', help='Whether to output to a virtual camera or not.')
+    lw_parser.add_argument('--width', default=1920, type=int, help='Virtual camera width.')
+    lw_parser.add_argument('--height', default=1080, type=int, help='Virtual camera height.')
+    lw_parser.add_argument('--fps', default=10, type=int, help='Virtual camera fps.')
 
     # flags
-    parser.add_argument('--override-cache', action='store_true', help='Recompute features by overriding the cache.')
-    parser.add_argument('--skip-existing', action='store_true',
+    flags_parser = parser.add_argument_group(title='General flags')
+    flags_parser.add_argument('--override-cache', action='store_true', help='Recompute features by overriding the cache.')
+    flags_parser.add_argument('--skip-existing', action='store_true',
                         help='Whether to skip files that already exist in the output directory.')
-    parser.add_argument('--only-analyze', action='store_true',
+    flags_parser.add_argument('--only-analyze', action='store_true',
                         help='Whether to only analyze the images and videos (does not apply censoring).')
-    parser.add_argument('--debug', action='store_true', help='Whether to enable debug mode.')
+    flags_parser.add_argument('--debug', action='store_true', help='Whether to enable debug mode.')
 
     # server arguments
-    parser.add_argument('--port', default=8443, type=int, help='Port to run the server on.')
-    parser.add_argument('--host', default='localhost', type=str, help='Host to run the server on.')
-    parser.add_argument('--ssl-cert', default='cert.pem', type=str, help='Path to certificate file.')
-    parser.add_argument('--ssl-key', default='key.pem', type=str, help='Path to key file.')
+    server_parser = parser.add_argument_group(title='Server arguments')
+    server_parser.add_argument('--port', default=8443, type=int, help='Port to run the server on.')
+    server_parser.add_argument('--host', default='localhost', type=str, help='Host to run the server on.')
+    server_parser.add_argument('--ssl-cert', default='cert.pem', type=str, help='Path to certificate file.')
+    server_parser.add_argument('--ssl-key', default='key.pem', type=str, help='Path to key file.')
 
     args = parser.parse_args()
     create_dirs()
@@ -202,14 +209,14 @@ def main():
     elif args.mode in ['live']:
         if args.device != -1:
             logger.warning(f"Device id was given, but is not used with live mode. Using 'webcam' mode if you want to censor a camera..")
-        start_live_censor(args.live_mode, device_id=-1)
+        start_live_censor(args.live_mode, device_id=-1, use_vcam=args.vcam, vcam_width=args.width, vcam_height=args.height, vcam_fps=args.fps)
 
     elif args.mode in ['webcam']:
         if args.device == -1:
             logger.warning(f"No device id provided, using default (0).")
         if args.live_mode != 'quick':
             logger.warning(f"{args.live_mode} mode is not supported for webcam censoring. Using quick mode.")
-        start_live_censor('quick', device_id=0)
+        start_live_censor('quick', device_id=0, use_vcam=args.vcam, vcam_width=args.width, vcam_height=args.height, vcam_fps=args.fps)
 
     elif args.mode in ['image', 'images']:
         start_image_censor(input_path, output_path,
