@@ -6,19 +6,19 @@ from threading import Event
 import cv2
 import numpy as np
 import pyautogui
+from loguru import logger
 
 from core import models, draw, process_multiple_passes, censor_image_from_boxes, Box
 
 from app.config import CONFIG
 
-import constants
 from core import ProcessedResult
 
-from .screenshot import get_screenshot
 from . import utils
+from .utils import get_next_frame, push_frame
 
 
-def censor_loop(stop_event: Event, message_queue: Queue[ProcessedResult], reload_config, window_name: str):
+def censor_loop(stop_event: Event, message_queue: Queue[ProcessedResult], reload_config, input_device: cv2.VideoCapture|None, output_device):
     scale_array = []
     for size in CONFIG.picture_sizes:
         scale_array.append(
@@ -30,11 +30,7 @@ def censor_loop(stop_event: Event, message_queue: Queue[ProcessedResult], reload
     ### set up for censoring
     live_boxes: deque[Box] = deque()
     boxes_buffer: deque[Box] = deque()
-    image_buffer: deque[tuple[int, np.ndarray]] = deque()
-
-    init_image = cv2.imread(constants.init_screen_image, cv2.IMREAD_GRAYSCALE)
-    init_image = cv2.resize(init_image, (CONFIG.live.cap_width, CONFIG.live.cap_height))
-    cv2.imshow(window_name, init_image)
+    image_buffer: deque[tuple[float, np.ndarray]] = deque()
 
     censor_config, file_hash, _ = reload_config(None, '', force=True)
     force = False
@@ -61,15 +57,13 @@ def censor_loop(stop_event: Event, message_queue: Queue[ProcessedResult], reload
             # check queue for new detection out
             try:
                 result = message_queue.get(block=True, timeout=1)
-                if CONFIG.debug:
-                    print("CENSOR received new message.")
+                logger.debug("CENSOR received new message.")
             except Empty:
-                if CONFIG.debug:
-                    print("CENSOR: raw_model_output queue is empty")
+                logger.debug("CENSOR: raw_model_output queue is empty")
                 continue
 
             # take screenshot
-            image_buffer.append(get_screenshot())
+            image_buffer.append(get_next_frame(input_device))
 
             boxes: list[Box] = process_multiple_passes(result.features, result.bodies, censor_config)
             boxes.sort(reverse=True)
@@ -128,8 +122,8 @@ def censor_loop(stop_event: Event, message_queue: Queue[ProcessedResult], reload
                 draw.annotate_image(frame, f"frames: {frames_put_out}", 0)
                 draw.annotate_image(frame, f"FPS: {fps}", 2)
 
-            cv2.imshow(window_name, frame)
+            push_frame(output_device, frame)
             message_queue.task_done()
 
         except ValueError as e:
-            print(f"VISION_CENSOR exception occurred: {e}")
+            logger.error(f"Error: {e}")

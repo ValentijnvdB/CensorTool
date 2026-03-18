@@ -161,9 +161,9 @@ def main():
     lw_parser.add_argument('--live-mode', default='quick', type=str, help='Live mode (quick or precise)')
     lw_parser.add_argument('--device', default=-1, type=int, help='Device to use (only used for live webcam censor).')
     lw_parser.add_argument('--vcam', action='store_true', help='Whether to output to a virtual camera or not.')
-    lw_parser.add_argument('--width', default=1920, type=int, help='Virtual camera width.')
-    lw_parser.add_argument('--height', default=1080, type=int, help='Virtual camera height.')
-    lw_parser.add_argument('--fps', default=10, type=int, help='Virtual camera fps.')
+    lw_parser.add_argument('--vcam-w', default=1920, type=int, help='Virtual camera width.')
+    lw_parser.add_argument('--vcam-h', default=1080, type=int, help='Virtual camera height.')
+    lw_parser.add_argument('--vcam-fps', default=10, type=int, help='Virtual camera target fps.')
 
     # flags
     flags_parser = parser.add_argument_group(title='General flags')
@@ -209,14 +209,12 @@ def main():
     elif args.mode in ['live']:
         if args.device != -1:
             logger.warning(f"Device id was given, but is not used with live mode. Using 'webcam' mode if you want to censor a camera..")
-        start_live_censor(args.live_mode, device_id=-1, use_vcam=args.vcam, vcam_width=args.width, vcam_height=args.height, vcam_fps=args.fps)
+        start_live_censor(args.live_mode, device_id=-1, use_vcam=args.vcam, vcam_width=args.vcam_w, vcam_height=args.vcam_h, vcam_fps=args.vcam_fps)
 
     elif args.mode in ['webcam']:
         if args.device == -1:
             logger.warning(f"No device id provided, using default (0).")
-        if args.live_mode != 'quick':
-            logger.warning(f"{args.live_mode} mode is not supported for webcam censoring. Using quick mode.")
-        start_live_censor('quick', device_id=0, use_vcam=args.vcam, vcam_width=args.width, vcam_height=args.height, vcam_fps=args.fps)
+        start_live_censor('quick', device_id=args.device, use_vcam=args.vcam, vcam_width=args.vcam_w, vcam_height=args.vcam_h, vcam_fps=args.vcam_fps)
 
     elif args.mode in ['image', 'images']:
         start_image_censor(input_path, output_path,

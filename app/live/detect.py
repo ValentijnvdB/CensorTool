@@ -1,4 +1,3 @@
-import hashlib
 from concurrent.futures import Future, wait, FIRST_COMPLETED
 from queue import Queue
 from threading import Event
@@ -10,18 +9,17 @@ from core import ProcessedResult, ImageInput, Job, ImagePipeline
 
 from app.config import CONFIG
 
-from .screenshot import get_screenshot
+from .utils import get_next_frame
 
 
-def detect_loop(stop_event: Event, message_queue: Queue[ProcessedResult]):
+def detect_loop(stop_event: Event, message_queue: Queue[ProcessedResult], input_device):
 
     prev_image_sum = 0
-    prev_image_hash = 0
 
     with ImagePipeline(max_workers=4) as pipeline:
         futures: dict[float, Future] = {}
         cancel_events: dict[float, Event] = {}
-        def add_image(image_or_path: ImageInput, ts: float, image_sum: int, image_hash: bytes|int) -> None:
+        def add_image(image_or_path: ImageInput, ts: float, image_sum: int) -> None:
             """Drop-in callback for your external API."""
             c_event = Event()
             job = Job(
@@ -34,8 +32,7 @@ def detect_loop(stop_event: Event, message_queue: Queue[ProcessedResult]):
                 sizes=CONFIG.picture_sizes,
                 cancelled=c_event,
                 data={
-                    'sum': image_sum,
-                    'hash': image_hash
+                    'sum': image_sum
                 }
             )
             futures[ts] = pipeline.submit(job)
@@ -44,25 +41,13 @@ def detect_loop(stop_event: Event, message_queue: Queue[ProcessedResult]):
 
         while not stop_event.is_set():
 
-            timestamp, screenshot = get_screenshot()
+            timestamp, frame = get_next_frame(input_device)
 
-            ### we don't want to censor again if image is unchanged
-            ### hashing at size 1280 takes 30ms, which is not nothing
-            ### summing takes 10ms, which is a lot less overhead.
-            ### so start with a very fast check (just sum the image)
-            ### if the sum is unchanged, proceed to hash
-            ### this means we will Detect the same image twice in a
-            ### row, but not more than twice
-            new_sum = np.sum(screenshot)
-
-            if new_sum == prev_image_sum:
-                new_hash = hashlib.md5(screenshot.tobytes()).digest()
-            else:
-                new_hash = 0
+            new_sum = np.sum(frame)
 
             # Submit the screenshot for censoring
-            if new_sum != prev_image_sum or new_hash != prev_image_hash:
-                add_image(screenshot, timestamp, new_sum, new_hash)
+            if new_sum != prev_image_sum:
+                add_image(frame, timestamp, new_sum)
 
                 # Block until at least one analyzes job is done
                 done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
@@ -79,7 +64,6 @@ def detect_loop(stop_event: Event, message_queue: Queue[ProcessedResult]):
                     continue
 
                 result_timestamp = completed.timestamp
-                prev_image_hash = completed.data.get('hash')
                 prev_image_sum = completed.data.get('sum')
                 message_queue.put(completed.result)
 

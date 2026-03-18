@@ -3,6 +3,7 @@ from threading import Event, Thread
 from typing import Any
 
 import cv2
+from loguru import logger
 
 from core import CensorConfig
 from app.config import CONFIG, censor_config_has_changed, load_censor_config_from_file_w_hash
@@ -20,13 +21,20 @@ from .quick import quick_live_censor
 # 'Quick' runs the censor pipeline on each frame separately, making it much quicker,
 # but if it could happen that some stuff is visible if the models does not detect a feature for a few frames
 # 'Precise' solves this keeping track of the boxes and
-# applies the time_safety property to keep the boxes for some time when the feature is not detected anymore
+# applies the time_safety property to keep the boxes for some time after the feature is not detected anymore
 # at the cost of increased latency
 ####################################################################################################################
 
-def start_live_censor(mode: str, device_id: int, to_v_cam: bool, width: int, height: int, fps: int):
+def start_live_censor(mode: str, input_device_id: int, to_v_cam: bool, vcam_w: int = 1920, vcam_h: int = 1080, vcam_fps: int = 10):
     """
-    Start the live censoring mode
+    Start the live/webcam censoring mode.
+
+    :param mode: quick or precise. quick=no buffering, precise=with buffering
+    :param input_device_id: the id of the input device. <0 for screenshot mode
+    :param to_v_cam: If true, output to a virtual cam, otherwise use a cv2 window
+    :param vcam_w: the width of the virtual camera.
+    :param vcam_h: the height of the virtual camera.
+    :param vcam_fps: target fps of the virtual camera.
     """
     window_name = 'Live Censoring'
 
@@ -35,7 +43,8 @@ def start_live_censor(mode: str, device_id: int, to_v_cam: bool, width: int, hei
     # setup output device
     if to_v_cam:
         from pyvirtualcam import Camera, PixelFormat
-        output_device = Camera(width=width, height=height, fps=fps, fmt=PixelFormat.BGR)
+        output_device = Camera(width=vcam_w, height=vcam_h, fps=vcam_fps, fmt=PixelFormat.BGR)
+        logger.info(f"Outputting to {output_device.device}")
     else:
         cv2.startWindowThread()
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -48,14 +57,14 @@ def start_live_censor(mode: str, device_id: int, to_v_cam: bool, width: int, hei
 
     # setup input device
     input_device = None
-    if device_id >= 0:
-        input_device = cv2.VideoCapture(device_id)
+    if input_device_id >= 0:
+        input_device = cv2.VideoCapture(input_device_id)
 
     try:
         if mode == "quick":
             _start_quick(stop_event, output_device, input_device)
         elif mode == "precise":
-            _start_precise(stop_event, window_name)
+            _start_precise(stop_event, output_device, input_device)
         else:
             raise Exception(f"Invalid mode: {mode}")
     except Exception as e:
@@ -84,17 +93,17 @@ def reload_censor_config(censor_config: CensorConfig|None, file_hash: str = '', 
     return censor_config, file_hash, changed
 
 
-def _start_precise(stop_event: Event, window_name: str):
+def _start_precise(stop_event: Event, output_device: Any, input_device: cv2.VideoCapture|None):
     message_queue: Queue[ProcessedResult] = Queue()
 
     detect_thread = Thread(target=detect_loop,
-                           args=(stop_event, message_queue),
+                           args=(stop_event, message_queue, input_device),
                            daemon=True)
 
     detect_thread.start()
 
     try:
-        censor_loop(stop_event, message_queue, reload_censor_config, window_name)
+        censor_loop(stop_event, message_queue, reload_censor_config, input_device, output_device)
 
     except KeyboardInterrupt:
         print("Interrupted...")

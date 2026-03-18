@@ -1,6 +1,7 @@
 import hashlib
 import time
 import traceback
+from collections import deque
 from concurrent.futures import FIRST_COMPLETED, wait, Future
 from threading import Event
 from typing import Any
@@ -10,31 +11,11 @@ import numpy as np
 import pyautogui
 from loguru import logger
 
-from core import CensorConfig, ImagePipeline, Job, ImageInput, ProcessedResult
+from core import CensorConfig, ImagePipeline, Job, ImageInput, ProcessedResult, draw
 
 from app.config import CONFIG
 
-from .screenshot import get_screenshot
-
-
-def get_next_image(vid_cap: cv2.VideoCapture = None) -> tuple[float, np.ndarray]:
-    if vid_cap is None:
-        return get_screenshot()
-
-    ret, frame = vid_cap.read()
-    if not ret:
-        raise RuntimeError('Failed to get next image from video capture')
-
-    return time.monotonic(), frame
-
-
-def _push_frame(device, frame: np.ndarray):
-
-    if isinstance(device, str):
-        cv2.imshow(device, frame)
-    else:
-        device.send(frame)
-        device.sleep_until_next_frame()
+from .utils import get_next_frame, push_frame
 
 
 def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_cap: cv2.VideoCapture|None):
@@ -47,7 +28,6 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
     :param vid_cap: the video capture device. if None, will take screenshots.
     """
     prev_image_sum = 0
-    prev_image_hash = 0
     previous_censored_screenshots: np.ndarray = None
 
     censor_config, file_hash, _ = reload_config(None, '', force=True)
@@ -55,7 +35,7 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
     with ImagePipeline(max_workers=4) as pipeline:
         futures: dict[float, Future] = {}
         cancel_events: dict[float, Event] = {}
-        def add_image(image_or_path: ImageInput, ts: float, image_sum: int, image_hash: bytes|int, cc: CensorConfig) -> None:
+        def add_image(image_or_path: ImageInput, ts: float, image_sum: int, cc: CensorConfig) -> None:
             """Drop-in callback for your external API."""
             c_event = Event()
             job = Job(
@@ -68,16 +48,15 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
                 sizes=CONFIG.picture_sizes,
                 cancelled=c_event,
                 data={
-                    'sum': image_sum,
-                    'hash': image_hash
+                    'sum': image_sum
                 },
                 config=cc
             )
             futures[ts] = pipeline.submit(job)
             cancel_events[ts] = c_event
 
-
-        i = 0
+        start_times: deque[float] = deque()
+        frames_put_out = 0
         force_reload = False
         errored = False
         while not stop_event.is_set():
@@ -92,30 +71,21 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
                 elif key == ord("r"):
                     force_reload = True
 
+                start_times.append(time.time())
+
                 # reload box_config if it has changed
                 censor_config, file_hash, reloaded_config = reload_config(censor_config, file_hash, force=force_reload)
                 force_reload = False
 
-                timestamp, screenshot = get_next_image(vid_cap)
+                timestamp, screenshot = get_next_frame(vid_cap)
 
-                ### we don't want to censor again if image is unchanged
-                ### hashing at size 1280 takes 30ms, which is not nothing
-                ### summing takes 10ms, which is a lot less overhead.
-                ### so start with a very fast check (just sum the image)
-                ### if the sum is unchanged, proceed to hash
-                ### this means we will Detect the same image twice in a
-                ### row, but not more than twice
+                # compute sum to compare against previous
                 new_sum = np.sum(screenshot)
 
-                if new_sum == prev_image_sum:
-                    new_hash = hashlib.md5(screenshot.tobytes()).digest()
-                else:
-                    new_hash = 0
-
                 force_update = errored or reloaded_config
-                if force_update or new_sum != prev_image_sum or new_hash != prev_image_hash:
+                if force_update or new_sum != prev_image_sum:
                     # Submit the screenshot for censoring
-                    add_image(screenshot, timestamp, new_sum, new_hash, censor_config)
+                    add_image(screenshot, timestamp, new_sum, censor_config)
 
                     # Block until at least one analyzes job is done
                     done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
@@ -163,9 +133,20 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
                         frame = cv2.putText(frame, f'({cx}, {cy})', (max(cx - 10, 0), max(cy - 10, 0)),
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
+                while len(start_times) > 10:
+                    start_times.popleft()
+                frames_put_out += 1
 
-                _push_frame(output_device, frame)
-                i += 1
+                if CONFIG.live.show_fps:
+                    try:
+                        fps = 10 / (time.time() - start_times[0])
+                    except ZeroDivisionError:
+                        fps = 0
+                    draw.annotate_image(frame, f"frames: {frames_put_out}", 0)
+                    draw.annotate_image(frame, f"FPS: {fps}", 2)
+
+
+                push_frame(output_device, frame)
                 errored = False
             except Exception as e:
                 log_str = f"Error: {e}"
