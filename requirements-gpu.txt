@@ -12,3 +12,4 @@ Shapely
 tqdm
 typing_extensions
 ultralytics
+pyvirtualcam
