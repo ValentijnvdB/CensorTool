@@ -1,4 +1,5 @@
 import hashlib
+import traceback
 from concurrent.futures import FIRST_COMPLETED, wait, Future
 from threading import Event
 
@@ -51,89 +52,97 @@ def quick_live_censor(stop_event: Event, reload_config, window_name: str, device
 
 
         i = 0
-        force = False
+        force_reload = False
         while not stop_event.is_set():
 
-            # open window and check user input
-            key = cv2.waitKey(1)
-            if key == ord("q"):
-                cv2.destroyAllWindows()
-                stop_event.set()
-                break
-            elif key == ord("r"):
-                force = True
+            try:
+                # open window and check user input
+                key = cv2.waitKey(1)
+                if key == ord("q"):
+                    cv2.destroyAllWindows()
+                    stop_event.set()
+                    break
+                elif key == ord("r"):
+                    force_reload = True
 
-            # reload box_config if it has changed
-            censor_config, file_hash, force_update = reload_config(censor_config, file_hash, force=force)
-            force = False
+                # reload box_config if it has changed
+                censor_config, file_hash, reloaded_config = reload_config(censor_config, file_hash, force=force_reload)
+                force_reload = False
 
-            timestamp, screenshot = get_next_image(vid_cap)
+                timestamp, screenshot = get_next_image(vid_cap)
 
-            ### we don't want to censor again if image is unchanged
-            ### hashing at size 1280 takes 30ms, which is not nothing
-            ### summing takes 10ms, which is a lot less overhead.
-            ### so start with a very fast check (just sum the image)
-            ### if the sum is unchanged, proceed to hash
-            ### this means we will Detect the same image twice in a
-            ### row, but not more than twice
-            new_sum = np.sum(screenshot)
+                ### we don't want to censor again if image is unchanged
+                ### hashing at size 1280 takes 30ms, which is not nothing
+                ### summing takes 10ms, which is a lot less overhead.
+                ### so start with a very fast check (just sum the image)
+                ### if the sum is unchanged, proceed to hash
+                ### this means we will Detect the same image twice in a
+                ### row, but not more than twice
+                new_sum = np.sum(screenshot)
 
-            if new_sum == prev_image_sum:
-                new_hash = hashlib.md5(screenshot.tobytes()).digest()
-            else:
-                new_hash = 0
+                if new_sum == prev_image_sum:
+                    new_hash = hashlib.md5(screenshot.tobytes()).digest()
+                else:
+                    new_hash = 0
 
-            # Submit the screenshot for censoring
-            if force_update or new_sum != prev_image_sum or new_hash != prev_image_hash:
-                # logger.info(f"Performing detection: prev_image_sum={prev_image_sum}, prev_image_hash={prev_image_hash}, new_sum={new_sum}, new_hash={new_hash}, hash={prev_image_hash==new_hash}, sum={new_sum==prev_image_sum}")
-                add_image(screenshot, timestamp, new_sum, new_hash, censor_config)
+                force_update = errored or reloaded_config
+                if force_update or new_sum != prev_image_sum or new_hash != prev_image_hash:
+                    # Submit the screenshot for censoring
+                    add_image(screenshot, timestamp, new_sum, new_hash, censor_config)
 
-                # Block until at least one analyzes job is done
-                done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
+                    # Block until at least one analyzes job is done
+                    done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
 
-                # look for the finished job with the lowest frame_number
-                for job_id, future in futures.items():
-                    if future in done:
-                        completed: Job = future.result()
-                        del futures[job_id]
-                        del cancel_events[job_id]
-                        break
+                    # look for the finished job with the lowest frame_number
+                    for job_id, future in futures.items():
+                        if future in done:
+                            completed: Job = future.result()
+                            del futures[job_id]
+                            del cancel_events[job_id]
+                            break
 
-                if completed is None or not completed.success:
-                    continue
+                    if completed is None or not completed.success:
+                        continue
 
-                result = completed.result
-                assert isinstance(result, ProcessedResult)
-                result_timestamp = completed.timestamp
-                prev_image_hash = completed.data.get('hash')
-                prev_image_sum = completed.data.get('sum')
-                frame = result.image
-                previous_censored_screenshots = frame.copy()
+                    result = completed.result
+                    assert isinstance(result, ProcessedResult)
+                    result_timestamp = completed.timestamp
+                    prev_image_hash = completed.data.get('hash')
+                    prev_image_sum = completed.data.get('sum')
+                    frame = result.image
+                    previous_censored_screenshots = frame.copy()
 
-                # cancel all jobs for screenshots taken before the completed
-                for t in cancel_events:
-                    if result_timestamp < t:
-                        break
-                    logger.info(f'Cancelling job {t}')
-                    cancel_events[t].set()
-                    del cancel_events[t]
-                    del futures[t]
-            else:
-                # if nothing changed on screen, we still want to update in case of mouse movements.
-                frame = previous_censored_screenshots.copy()
+                    # cancel all jobs for screenshots taken before the completed
+                    for t in cancel_events:
+                        if result_timestamp < t:
+                            break
+                        logger.debug(f'Cancelling job {t}')
+                        cancel_events[t].set()
+                        del cancel_events[t]
+                        del futures[t]
+                else:
+                    # if nothing changed on screen, we still want to update in case of mouse movements.
+                    frame = previous_censored_screenshots.copy()
 
 
-            cx, cy = pyautogui.position()
-            cx = cx - CONFIG.live.cap_left
-            cy = cy - CONFIG.live.cap_top
+                cx, cy = pyautogui.position()
+                cx = cx - CONFIG.live.cap_left
+                cy = cy - CONFIG.live.cap_top
 
-            if 5 < cx < CONFIG.live.cap_width and 5 < cy < CONFIG.live.cap_height:
-                color = tuple(reversed(CONFIG.live.cursor_color))
-                frame[cy - 5:cy + 5, cx - 5:cx + 5] = color
+                if 5 < cx < CONFIG.live.cap_width and 5 < cy < CONFIG.live.cap_height:
+                    color = tuple(reversed(CONFIG.live.cursor_color))
+                    frame[cy - 5:cy + 5, cx - 5:cx + 5] = color
+                    if CONFIG.debug:
+                        frame = cv2.putText(frame, f'({cx}, {cy})', (max(cx - 10, 0), max(cy - 10, 0)),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+
+                cv2.imshow(window_name, frame)
+                i += 1
+                errored = False
+            except Exception as e:
+                log_str = f"Error: {e}"
                 if CONFIG.debug:
-                    frame = cv2.putText(frame, f'({cx}, {cy})', (max(cx - 10, 0), max(cy - 10, 0)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-
-            cv2.imshow(window_name, frame)
-            i += 1
+                    log_str += f" {traceback.format_exc()}"
+                logger.error(log_str)
+                errored = True
