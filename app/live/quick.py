@@ -11,18 +11,19 @@ from core import CensorConfig, ImagePipeline, Job, ImageInput, ProcessedResult
 
 from app.config import CONFIG
 
-from .screenshot import get_screenshot
+from .screenshot import get_next_image
 
 
-
-def quick_vision(stop_event: Event, reload_config, window_name: str):
-    ### set up for censoring
-
+def quick_live_censor(stop_event: Event, reload_config, window_name: str, device_id: int):
     prev_image_sum = 0
     prev_image_hash = 0
     previous_censored_screenshots: np.ndarray = None
 
     censor_config, file_hash, _ = reload_config(None, '', force=True)
+
+    vid_cap = None
+    if device_id >= 0:
+        vid_cap = cv2.VideoCapture(device_id)
 
     with ImagePipeline(max_workers=4) as pipeline:
         futures: dict[float, Future] = {}
@@ -66,7 +67,7 @@ def quick_vision(stop_event: Event, reload_config, window_name: str):
             censor_config, file_hash, force_update = reload_config(censor_config, file_hash, force=force)
             force = False
 
-            timestamp, screenshot = get_screenshot()
+            timestamp, screenshot = get_next_image(vid_cap)
 
             ### we don't want to censor again if image is unchanged
             ### hashing at size 1280 takes 30ms, which is not nothing
@@ -118,6 +119,7 @@ def quick_vision(stop_event: Event, reload_config, window_name: str):
                     del cancel_events[t]
                     del futures[t]
             else:
+                # if nothing changed on screen, we still want to update in case of mouse movements.
                 frame = previous_censored_screenshots.copy()
 
 

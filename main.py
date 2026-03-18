@@ -125,9 +125,9 @@ def create_dirs():
     makedirs(constants.model_root, exist_ok=True)
 
 
-def start_live_censor():
+def start_live_censor(mode: str, device_id: int):
     from app.live import start_live_censor
-    start_live_censor()
+    start_live_censor(mode, device_id)
 
 
 def serve_http(host, port, ssl_file, ssl_key):
@@ -141,6 +141,7 @@ def get_mode_overview():
         "'video': censor videos. "
         "'all': censor images and videos. "
         "'live': real time censoring. "
+        "'webcam': real time webcam censoring. "
         "'http: start the http server."
     )
 
@@ -154,6 +155,10 @@ def main():
     parser.add_argument('--config', default='./config.yml', help='Path to the main config file.')
     parser.add_argument('-cc', '--censor-config',
                         default='./default_censor_config.yml', help='Path to the censor config file.')
+
+    # live & webcam mode
+    parser.add_argument('--live-mode', default='quick', type=str, help='Live mode (quick or precise)')
+    parser.add_argument('--device', default=-1, type=int, help='Device to use (only used for live webcam censor).')
 
     # flags
     parser.add_argument('--override-cache', action='store_true', help='Recompute features by overriding the cache.')
@@ -190,30 +195,46 @@ def main():
     output_path = Path(args.output)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    ############ Start the correct mode ############
     if args.mode in ['init']:
         logger.info("Setting up directories.")
+
     elif args.mode in ['live']:
-        start_live_censor()
+        if args.device != -1:
+            logger.warning(f"Device id was given, but is not used with live mode. Using 'webcam' mode if you want to censor a camera..")
+        start_live_censor(args.live_mode, device_id=-1)
+
+    elif args.mode in ['webcam']:
+        if args.device == -1:
+            logger.warning(f"No device id provided, using default (0).")
+        if args.live_mode != 'quick':
+            logger.warning(f"{args.live_mode} mode is not supported for webcam censoring. Using quick mode.")
+        start_live_censor('quick', device_id=0)
+
     elif args.mode in ['image', 'images']:
         start_image_censor(input_path, output_path,
                            override_cache=args.override_cache,
                            skip_existing=args.skip_existing,
                            only_analyze=args.only_analyze,
                            censor_config=args.censor_config)
+
     elif args.mode in ['video', 'videos']:
         start_video_censor(input_path, output_path,
                            override_cache=args.override_cache,
                            skip_existing=args.skip_existing,
                            only_analyze=args.only_analyze,
                            censor_config=args.censor_config)
+
     elif args.mode in ['all']:
         censor_all(input_path, output_path,
                     override_cache=args.override_cache,
                     skip_existing=args.skip_existing,
                     only_analyze=args.only_analyze,
                     censor_config=args.censor_config)
+
     elif args.mode in ['http', 'https']:
         serve_http(args.host, args.port, args.ssl_cert, args.ssl_key)
+
     else:
         raise ValueError(f'Unknown mode: {args.mode}')
 

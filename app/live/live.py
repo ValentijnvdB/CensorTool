@@ -11,7 +11,7 @@ from core import ProcessedResult
 
 from .censor import censor_loop
 from .detect import detect_loop
-from .quick import quick_vision
+from .quick import quick_live_censor
 
 
 ####################################################################################################################
@@ -23,7 +23,7 @@ from .quick import quick_vision
 # at the cost of increased latency
 ####################################################################################################################
 
-def start_live_censor(mode: str = 'quick'):
+def start_live_censor(mode: str = 'quick', device_id: int = -1):
     """
     Start the live censoring mode
     """
@@ -39,7 +39,7 @@ def start_live_censor(mode: str = 'quick'):
     stop_event = Event()
 
     if mode == "quick":
-        _start_quick(stop_event, window_name)
+        _start_quick(stop_event, window_name, device_id)
     elif mode == "precise":
         _start_precise(stop_event, window_name)
     else:
@@ -77,10 +77,10 @@ def _start_precise(stop_event: Event, window_name: str):
         detect_thread.join()
 
 
-def _start_quick(stop_event: Event, window_name: str):
+def _start_quick(stop_event: Event, window_name: str, device_id: int):
 
     try:
-        quick_vision(stop_event, reload_censor_config, window_name)
+        quick_live_censor(stop_event, reload_censor_config, window_name, device_id)
 
     except KeyboardInterrupt:
         print("Interrupted...")
