@@ -16,7 +16,7 @@ def detect_loop(stop_event: Event, message_queue: Queue[ProcessedResult], input_
 
     prev_image_sum = 0
 
-    with ImagePipeline(max_workers=4) as pipeline:
+    with ImagePipeline(max_workers=CONFIG.n_workers) as pipeline:
         futures: dict[float, Future] = {}
         cancel_events: dict[float, Event] = {}
         def add_image(image_or_path: ImageInput, ts: float, image_sum: int) -> None:

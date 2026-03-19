@@ -32,7 +32,7 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
 
     censor_config, file_hash, _ = reload_config(None, '', force=True)
 
-    with ImagePipeline(max_workers=4) as pipeline:
+    with ImagePipeline(max_workers=CONFIG.n_workers) as pipeline:
         futures: dict[float, Future] = {}
         cancel_events: dict[float, Event] = {}
         def add_image(image_or_path: ImageInput, ts: float, image_sum: int, cc: CensorConfig) -> None:
