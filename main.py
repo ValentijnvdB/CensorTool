@@ -7,7 +7,7 @@ from pathlib import Path
 from loguru import logger, _defaults
 
 import constants
-import app
+from app import init_app
 
 
 def format_time(total_ms: float) -> str:
@@ -64,6 +64,7 @@ def parse_input_path(input_path: Path, extension_filter: list[str]) -> list[Path
 
 
 def start_image_censor(input_path: Path, output_path: Path, **kwargs):
+    from app.image import censor_images
     logger.info("Censoring images")
 
     try:
@@ -73,7 +74,7 @@ def start_image_censor(input_path: Path, output_path: Path, **kwargs):
         return
 
     start_time = time.perf_counter_ns()
-    app.censor_images(input_files, output_path, **kwargs)
+    censor_images(input_files, output_path, **kwargs)
     stop_time = time.perf_counter_ns()
 
     total_ms = (stop_time - start_time) / 1000000
@@ -84,6 +85,7 @@ def start_image_censor(input_path: Path, output_path: Path, **kwargs):
 
 
 def start_video_censor(input_path: Path, output_path: Path, **kwargs):
+    from app.video import censor_videos
     logger.info("Censoring videos")
     try:
         input_files = parse_input_path(input_path, constants.VID_EXT)
@@ -92,7 +94,7 @@ def start_video_censor(input_path: Path, output_path: Path, **kwargs):
         return
 
     start_time = time.perf_counter_ns()
-    app.censor_videos(input_files, output_path, **kwargs)
+    censor_videos(input_files, output_path, **kwargs)
     stop_time = time.perf_counter_ns()
 
     total_ms = (stop_time - start_time) / 1000000
@@ -181,7 +183,7 @@ def main():
     create_dirs()
 
     # Initialize the censor app
-    app.init_app(config_file=args.config, default_censor_config=args.censor_config, debug=args.debug)
+    init_app(config_file=args.config, default_censor_config=args.censor_config, debug=args.debug)
 
     # Remove the default stderr handler
     logger.remove()

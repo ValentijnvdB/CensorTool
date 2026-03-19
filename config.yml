@@ -79,6 +79,15 @@ input_delete_probability: 0
 # Options: 'fastest', 'faster', 'fast', 'medium-fast', 'medium', 'medium-slow', 'slow', 'slower', 'slowest'
 body_detection_model: 'fastest'
 
+# The number of workers in the threadpool
+n_workers: 4
+
+# The maximum number of jobs that can be active at any moment.
+# Limit this to reduce RAM usage.
+# Keep >=n_workers, otherwise the workers have idle time
+# Set to 0 for unlimited jobs.
+max_concurrent_jobs: 128
+
 # If you have more than one graphics card, and you care which one
 # runs the model change this. You probably don't need to change this
 cuda_device_id: 0

@@ -14,9 +14,6 @@ from . import ffmpeg
 from core import ImagePipeline
 
 
-
-MAX_ANALYZES_JOBS = 128
-
 def censor_videos(
         video_paths: list[Path],
         output_dir: Path|None = None,
@@ -34,7 +31,6 @@ def censor_videos(
     :param only_analyze: whether to only analyze the images for features and bodies.
     :param censor_config: the censoring configuration.
     """
-
     if isinstance(censor_config, dict):
         censor_config = CensorConfig(**censor_config)
     else:
@@ -207,7 +203,7 @@ def run_detection(
         cap: cv2.VideoCapture,
         vid_fps: float):
     """ Run the detection pipeline on all required frames. """
-    with (ImagePipeline(max_workers=4) as pipeline):
+    with ImagePipeline(max_workers=CONFIG.n_workers) as pipeline:
         futures = {}
 
         # create job for each frame.
@@ -245,8 +241,9 @@ def run_detection(
             return True
 
         def create_jobs():
+            """Create jobs until max_concurrent_jobs is reached."""
             nonlocal current_frame
-            while frames and len(futures) < MAX_ANALYZES_JOBS:
+            while frames and len(futures) < CONFIG.max_concurrent_jobs:
                 if not cap.isOpened():
                     break
                 success = add_frame(current_frame)

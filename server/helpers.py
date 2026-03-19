@@ -2,12 +2,10 @@ from pathlib import Path
 
 import numpy as np
 
-from core import Job, ImageInput, CensorConfig
-
-from app.image.image import ImagePipeline
-
+from core import Job, ImageInput, CensorConfig, ImagePipeline
 
 from . import utils, server_config
+
 
 # censoring pipeline
 _pipeline = ImagePipeline(max_workers=4)

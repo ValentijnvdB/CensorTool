@@ -42,6 +42,9 @@ class Config:
 
     debug: bool = field(default=False)
 
+    n_workers: int = 4
+    max_concurrent_jobs: int = 128
+
     comfy_base_url: str = "http://localhost:8188/"
     comfy_workflow: str|Path =  "./data/assets/workflow.json"
 
