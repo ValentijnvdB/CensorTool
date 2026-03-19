@@ -204,6 +204,10 @@ def main():
     if args.mode in ['init']:
         logger.info("Setting up directories.")
 
+    if args.mode in ['validate']:
+        from validate import validate_install
+        validate_install()
+
     elif args.mode in ['live']:
         if args.device != -1:
             logger.warning(f"Device id was given, but is not used with live mode. Using 'webcam' mode if you want to censor a camera..")

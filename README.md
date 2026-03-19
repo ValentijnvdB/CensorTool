@@ -31,6 +31,7 @@ For GPU support you'll need a Nvidia GPU and have [CUDA](https://developer.nvidi
 2. Clone this repo. 
     ```
     git clone https://github.com/ValentijnvdB/CensorTool.git
+    cd CensorTool
     ```
 3. Create and activate a virtual environment (optional step, but highly recommend).
     ```
@@ -55,6 +56,11 @@ For GPU support you'll need a Nvidia GPU and have [CUDA](https://developer.nvidi
    * Download the eye detection model (only needed if you want to enable eye detection) from
      https://github.com/opencv/opencv/blob/4.x/data/haarcascades/haarcascade_eye.xml
      and place it in the ```./data/models/``` folder.
+7. Run the validate process. This will run a few tests to see what features work.
+    ```
+    python main.py validate
+    ```
+
 
 You are now setup to censors images, videos and use real-time censoring.
 To censor images, place your images in the ```./data/uncensored``` folder then run ```python main.py images```
