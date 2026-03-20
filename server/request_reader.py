@@ -47,11 +47,12 @@ def get_image_path_from_url(url: str, extension: str = None) -> Path:
 
 
 def get_image_from_base64(data: dict) -> tuple[bytes, Path]:
-    """
-    Convert the image from a base64 string and store at path
-    """
-    extension = data['mime_type'].split('/')[-1]
-    path = get_image_path_from_url(data['image_url'], extension)
+    """Convert the image from a base64 string and store at path"""
+    mime_type = data.get('mime_type') or data.get('mimetype')
+    extension = None
+    if mime_type is not None:
+        extension = mime_type.split('/')[-1]
+    path = get_image_path_from_url(data.get('image_url'), extension)
 
     base64_data = data['image_data']
 
@@ -60,9 +61,7 @@ def get_image_from_base64(data: dict) -> tuple[bytes, Path]:
 
 
 def get_image_from_source(data: dict) -> tuple[bytes, Path]:
-    """
-    Get the image from a url source.
-    """
+    """Get the image from a url source."""
     # get the url
     if 'image_url' not in data:
         raise Exception("No image url provided")

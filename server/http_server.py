@@ -9,13 +9,13 @@ from loguru import logger
 import constants
 
 from . import request_reader as rr
-from .helpers import submit_censoring_job, start_pipeline, stop_pipeline
+from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job
 from .response_constructor import construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH
 
 
 async def censor_image(request):
-    """Censor image and return a stream"""
+    """Censor image and return the image."""
     try:
         image_bytes, image_path, censor_config, exp_response = await rr.read_request(request)
 
@@ -41,14 +41,14 @@ async def censor_image(request):
 
 
 async def detect_features(request):
-    """Handle file upload via HTTP POST"""
+    """Run detection on the image and return the result."""
     try:
         image_bytes, image_path, censor_config, exp_response = await rr.read_request(request)
 
         output_path = None
         if exp_response == 'url':
             output_path = CENSORED_PATH / image_path.name
-        result = submit_censoring_job(image_bytes, output_path, censor_config)
+        result = submit_detection_job(image_bytes, output_path, censor_config)
 
         # Create JSON response with detected features
         response_data = {
@@ -75,7 +75,7 @@ async def detect_features(request):
 
 
 async def reset_cache(request):
-    """Handle file upload via HTTP POST"""
+    """Delete all items in the detection cache."""
     try:
         if CACHE_DIR.exists():
             for item in CACHE_DIR.iterdir():

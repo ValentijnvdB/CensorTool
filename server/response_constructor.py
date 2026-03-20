@@ -40,6 +40,7 @@ def _construct_base64_response(image: bytes, extension: str) -> Response:
 
 
 def construct_response(expected_response: str, image: bytes|np.ndarray, extension: str, image_path: Path=None, name: str=None) -> Response:
+    """Returns the response in the expected format. Choices: 'bytes', 'url', or 'base64'."""
     if isinstance(image, np.ndarray):
         image = utils.np_to_bytes(image, extension)
 
@@ -47,5 +48,7 @@ def construct_response(expected_response: str, image: bytes|np.ndarray, extensio
         return _construct_bytes_response(image, name=name)
     elif expected_response == 'url':
         return _construct_url_response(image, image_path=image_path)
-    else:
+    elif expected_response == 'base64':
         return _construct_base64_response(image, extension=extension)
+    else:
+        raise ValueError(f"Unexpected response type: {expected_response}")
