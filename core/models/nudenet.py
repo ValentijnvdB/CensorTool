@@ -5,6 +5,7 @@ import numpy as np
 import onnxruntime
 
 import constants
+from .utils import download_model
 
 from .. import get_general_config
 from ..datatypes import RawBox
@@ -37,6 +38,11 @@ def get_nudenet_session():
     sess_options.log_severity_level = 3
 
     model_path = constants.model_root / 'detector_v2_default_checkpoint.onnx'
+    if not model_path.exists():
+        raise FileNotFoundError("Could not find detector_v2_default_checkpoint.onnx in models directory. "
+                                "It must be downloaded manually from: "
+                                "https://github.com/notAI-tech/NudeNet/releases/download/v0/")
+
     _session = onnxruntime.InferenceSession(
         path_or_bytes=model_path,
         sess_options=sess_options,

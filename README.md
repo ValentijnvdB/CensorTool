@@ -16,7 +16,7 @@ Censor Tool is collection of programs to censor images and videos.
 
 ### Planned
 - [ ] Video censor via HTTP
-- [ ] Automatic model downloads
+- [x] ~~Automatic model downloads~~ (Expect for nudenet, because it requires to login)
 
 ## Installation Guide
 
@@ -51,12 +51,7 @@ For GPU support you'll need a Nvidia GPU and have [CUDA](https://developer.nvidi
     ```
     python main.py init
     ```
-6. Download the detection models.
-   * Download NudeNet from https://github.com/notAI-tech/NudeNet/releases/tag/v0. 
-     Download ```detector_v2_default_checkpoint.onnx``` and place it in the ```./data/models/``` folder.
-   * Download the eye detection model (only needed if you want to enable eye detection) from
-     https://github.com/opencv/opencv/blob/4.x/data/haarcascades/haarcascade_eye.xml
-     and place it in the ```./data/models/``` folder.
+6. Download NudeNet from https://github.com/notAI-tech/NudeNet/releases/tag/v0. Download ```detector_v2_default_checkpoint.onnx``` and place it in the ```./models/``` folder.
 7. Run the validate process. This will run a few tests to see what features work.
     ```
     python main.py validate

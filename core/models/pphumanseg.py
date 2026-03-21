@@ -1,10 +1,14 @@
 import math
 from pathlib import Path
+from threading import Lock
 
 import cv2
 
 import numpy as np
 from shapely import Polygon
+
+import constants
+from core.models.utils import download_model
 
 # Valid combinations of backends and targets
 backend_target_pairs = [
@@ -14,6 +18,8 @@ backend_target_pairs = [
     [cv2.dnn.DNN_BACKEND_TIMVX, cv2.dnn.DNN_TARGET_NPU],
     [cv2.dnn.DNN_BACKEND_CANN, cv2.dnn.DNN_TARGET_NPU]
 ]
+
+_lock: Lock = Lock()
 
 
 class PPHumanSeg:
@@ -96,13 +102,17 @@ def to_polygons(mask, height, width) -> list[Polygon]:
 
 
 def find_human_polygons(image,
-                        backend_target: int = 0,
-                        model_name: str = './models/pphumanseg/human_segmentation_pphumanseg_2023mar.onnx'):
+                        backend_target: int = 0):
     backend_id = backend_target_pairs[backend_target][0]
     target_id = backend_target_pairs[backend_target][1]
+
     # Instantiate PPHumanSeg
-    model_name = Path(__file__).resolve().parent.parent.parent / model_name
-    model = PPHumanSeg(model_path=str(model_name), backend_id=backend_id, target_id=target_id)
+    model = constants.model_root / 'human_segmentation_pphumanseg_2023mar.onnx'
+    with _lock:
+        if not model.exists():
+            download_model(url="https://github.com/opencv/opencv_zoo/raw/refs/heads/main/models/human_segmentation_pphumanseg/human_segmentation_pphumanseg_2023mar.onnx")
+
+    model = PPHumanSeg(model_path=str(model), backend_id=backend_id, target_id=target_id)
 
     height, width, _ = image.shape
 

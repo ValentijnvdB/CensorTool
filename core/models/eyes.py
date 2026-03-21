@@ -1,11 +1,15 @@
 import math
+from threading import Lock
 
 import cv2
 import numpy as np
 
 import constants
+from .utils import download_model
 from ..datatypes import RawBox
 
+
+_lock: Lock = Lock()
 
 def _find_eyes(image: np.ndarray,
                x_offset: int = 0,
@@ -21,7 +25,14 @@ def _find_eyes(image: np.ndarray,
 
     :return: None if no eyes were detected, list of corners of the eye boxes
     """
-    eye_cascade = cv2.CascadeClassifier(str(constants.model_root / 'haarcascade_eye.xml'))
+    model = constants.model_root / 'haarcascade_eye.xml'
+
+    # make sure only one thread starts the download
+    with _lock:
+        if not model.exists():
+            download_model(url="https://raw.githubusercontent.com/opencv/opencv/refs/heads/4.x/data/haarcascades/haarcascade_eye.xml")
+
+    eye_cascade = cv2.CascadeClassifier(str(model))
 
     if image.dtype != 'uint8':
         image = cv2.convertScaleAbs(image)

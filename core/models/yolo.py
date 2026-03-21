@@ -138,12 +138,7 @@ def find_human_polygons(
     model = YOLO(model_path)  # downloads weights on first use, then caches
 
     # ------------------------------------------------------------------
-    # 3. Load / validate image
-    # ------------------------------------------------------------------
-    h, w = image.shape[:2]
-
-    # ------------------------------------------------------------------
-    # 4. Run inference  (classes=[0] → person only, skips NMS on others)
+    # 3. Run inference  (classes=[0] → person only, skips NMS on others)
     # ------------------------------------------------------------------
     return model.predict(
         source=image,
@@ -155,6 +150,7 @@ def find_human_polygons(
         retina_masks=True,    # full-resolution masks (most accurate)
         verbose=verbose,
     )
+
 
 def to_polygons(model_output, height, width):
     polygons: List[Polygon] = []
