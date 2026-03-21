@@ -12,12 +12,13 @@ Censor Tool is collection of programs to censor images and videos.
 - Censor your screen or webcam in real-time (if you have a dedicated GPU).
 - Customize what and how features are censored.
 - Censor images remotely via the HTTP endpoint
-- Browser extension to automatically censor images (coming soon)
+- Browser extension to automatically censor images: [CensorExtension](https://github.com/ValentijnvdB/CensorExtension.git)
 
+### Planned
+- [ ] Video censor via HTTP
+- [ ] Automatic model downloads
 
 ## Installation Guide
-
----
 
 ### Requirements
 You will need two programs for the easiest installation:
@@ -70,7 +71,6 @@ For all modes and arguments, check the table below.
 
 ## Running Censor Tool
 
----
 Running censor tool requires you to provided the mandatory 'mode' argument, follwed by zero or more optional arguments. They are all explained below.
 ```
 python main.py <mode> <args>
