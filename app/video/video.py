@@ -66,7 +66,7 @@ def censor_videos(
         ))
 
 
-def censor_video(job: VideoJob):
+def censor_video(job: VideoJob, pl: ImagePipeline = None) -> VideoJob:
     output_path = Path(job.output_path) if isinstance(job.output_path, str) else job.output_path
     avi_path = Path(job.avi_path) if isinstance(job.avi_path, str) else job.avi_path
 
@@ -145,7 +145,8 @@ def censor_video(job: VideoJob):
             raw_boxes_per_pass=raw_boxes_per_pass,
             bodies_per_pass=bodies_per_pass,
             cap=cap,
-            vid_fps=vid_fps)
+            vid_fps=vid_fps,
+            pl=pl)
 
         for raw_boxes, bodies, path in zip(raw_boxes_per_pass, bodies_per_pass, cache_paths):
             write_cache(path, raw_boxes, bodies)
@@ -192,6 +193,7 @@ def censor_video(job: VideoJob):
         avi_path.unlink()
 
     job.result = output_path
+    job.success = True
     return job
 
 
@@ -201,96 +203,104 @@ def run_detection(
         raw_boxes_per_pass: list[dict[int, list[RawBox]]],
         bodies_per_pass: list[dict[int, list[Polygon]]],
         cap: cv2.VideoCapture,
-        vid_fps: float):
+        vid_fps: float,
+        pl: ImagePipeline):
     """ Run the detection pipeline on all required frames. """
-    with ImagePipeline(max_workers=CONFIG.n_workers) as pipeline:
-        futures = {}
+    should_close_pipeline = False
+    if pl is None:
+        pl = ImagePipeline(max_workers=CONFIG.n_workers)
+        should_close_pipeline = True
+        pl.start()
 
-        # create job for each frame.
-        frames: deque[int] = deque()
-        for f in needs_to_detect.keys():
-            frames.append(f)
-        num_frames_to_detect = len(needs_to_detect.keys())
-        current_frame = 0
+    futures = {}
 
-        def add_frame(frame_num: int) -> bool:
-            """Submit a frame to the pipeline."""
-            # This function may look a bit weird, because we are reading every frame from the video, even if it is not
-            # needed for analyzes. I found this approach was as much as 2.5x as fast vs skipping through the
-            # frames. Probably something to do with how the cv2.VideoCapture works under the hood.
-            _ret, _frame = cap.read()
-            if not _ret:
-                return False
+    # create job for each frame.
+    frames: deque[int] = deque()
+    for f in needs_to_detect.keys():
+        frames.append(f)
+    num_frames_to_detect = len(needs_to_detect.keys())
+    current_frame = 0
 
-            next_expected = frames.popleft()
-            if frame_num != next_expected:
-                frames.appendleft(next_expected)
-                return True
+    def add_frame(frame_num: int) -> bool:
+        """Submit a frame to the pipeline."""
+        # This function may look a bit weird, because we are reading every frame from the video, even if it is not
+        # needed for analyzes. I found this approach was as much as 2.5x as fast vs skipping through the
+        # frames. Probably something to do with how the cv2.VideoCapture works under the hood.
+        _ret, _frame = cap.read()
+        if not _ret:
+            return False
 
-            sizes = needs_to_detect[frame_num]
-
-            frame_job = Job(
-                job_id=frame_num,
-                image=_frame,
-                early_exit=True,
-                sizes=sizes,
-                timestamp=frame_num / vid_fps,
-                skip_cache_write=True
-            )
-            futures[frame_num] = pipeline.submit(frame_job)
+        next_expected = frames.popleft()
+        if frame_num != next_expected:
+            frames.appendleft(next_expected)
             return True
 
-        def create_jobs():
-            """Create jobs until max_concurrent_jobs is reached."""
-            nonlocal current_frame
-            while frames and len(futures) < CONFIG.max_concurrent_jobs:
-                if not cap.isOpened():
-                    break
-                success = add_frame(current_frame)
-                current_frame += 1
-                if not success:
-                    break
+        sizes = needs_to_detect[frame_num]
 
-        # create the initial jobs
+        frame_job = Job(
+            job_id=frame_num,
+            image=_frame,
+            early_exit=True,
+            sizes=sizes,
+            timestamp=frame_num / vid_fps,
+            skip_cache_write=True
+        )
+        futures[frame_num] = pl.submit(frame_job)
+        return True
+
+    def create_jobs():
+        """Create jobs until max_concurrent_jobs is reached."""
+        nonlocal current_frame
+        while frames and len(futures) < CONFIG.max_concurrent_jobs:
+            if not cap.isOpened():
+                break
+            success = add_frame(current_frame)
+            current_frame += 1
+            if not success:
+                break
+
+    # create the initial jobs
+    create_jobs()
+
+    # --- wait for the image analyzes to come back ---
+    pbar = tqdm(total=num_frames_to_detect)
+    per_job_times = []
+    while futures:
+
+        # Block until at least one analyzes job is done
+        done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
+
+        # look for the finished job with the lowest frame_number
+        for job_id, future in futures.items():
+            if future in done:
+                completed: Job = future.result()
+                del futures[job_id]
+                break
+
+        # create new jobs
         create_jobs()
 
-        # --- wait for the image analyzes to come back ---
-        pbar = tqdm(total=num_frames_to_detect)
-        per_job_times = []
-        while futures:
+        if not completed.success:
+            # If the job failed, the frame is added the buffered, but no boxes are added.
+            logger.warning(f"Frame {completed.job_id} failed.")
+            continue
 
-            # Block until at least one analyzes job is done
-            done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
+        frame_id = completed.job_id
+        result = completed.result
+        assert len(result.features) == len(needs_to_detect[frame_id])
+        assert len(result.bodies) == len(needs_to_detect[frame_id])
 
-            # look for the finished job with the lowest frame_number
-            for job_id, future in futures.items():
-                if future in done:
-                    completed: Job = future.result()
-                    del futures[job_id]
-                    break
+        for raw_boxes, bodies, size in zip(result.features, result.bodies, needs_to_detect[frame_id]):
+            index = sizes_dict[size]
+            raw_boxes_per_pass[index][frame_id] = raw_boxes
+            bodies_per_pass[index][frame_id] = bodies
 
-            # create new jobs
-            create_jobs()
-
-            if not completed.success:
-                # If the job failed, the frame is added the buffered, but no boxes are added.
-                logger.warning(f"Frame {completed.job_id} failed.")
-                continue
-
-            frame_id = completed.job_id
-            result = completed.result
-            assert len(result.features) == len(needs_to_detect[frame_id])
-            assert len(result.bodies) == len(needs_to_detect[frame_id])
-
-            for raw_boxes, bodies, size in zip(result.features, result.bodies, needs_to_detect[frame_id]):
-                index = sizes_dict[size]
-                raw_boxes_per_pass[index][frame_id] = raw_boxes
-                bodies_per_pass[index][frame_id] = bodies
-
-            pbar.update(1)
-            per_job_times.append(('Add to data struct', time.perf_counter_ns()))
+        pbar.update(1)
+        per_job_times.append(('Add to data struct', time.perf_counter_ns()))
 
     pbar.close()
+    if should_close_pipeline:
+        pl.stop()
 
     return raw_boxes_per_pass, bodies_per_pass
 

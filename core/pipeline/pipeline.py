@@ -97,6 +97,8 @@ class GenericPipeline(ABC):
         self._hd_worker: threading.Thread | None = None
         self._process_one = process_one
 
+        self.is_running = False
+
     # --- lifecycle ---
 
     def start(self) -> None:
@@ -117,6 +119,7 @@ class GenericPipeline(ABC):
             name="hd-worker",
         )
         self._hd_worker.start()
+        self.is_running = True
 
     def stop(self, wait: bool = True) -> None:
         """Graceful shutdown. Waits for in-flight work to finish."""
@@ -131,6 +134,8 @@ class GenericPipeline(ABC):
         if self._hd_worker:
             self._hd_worker.join()
             self._hd_worker = None
+
+        self.is_running = False
 
     def __enter__(self) -> "ImagePipeline":
         self.start()

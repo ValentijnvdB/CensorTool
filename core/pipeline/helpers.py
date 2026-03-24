@@ -170,7 +170,10 @@ def apply_censor(image: np.ndarray, items: list[Elements], write_path: Path|None
         image = draw_debug_bodies(image, [item.bodies for item in items])
     censored_image = censor_image_from_boxes(image, boxes, censor_config)
 
+
     if write_path is not None:
+        back_up_path = write_path.parent / (write_path.stem + '.png')
+
         if write_path.exists():
             count = 1
             stem = write_path.stem
@@ -178,8 +181,18 @@ def apply_censor(image: np.ndarray, items: list[Elements], write_path: Path|None
             directory = write_path.parent
             while write_path.exists():
                 write_path = directory / f"{stem}_{count}{ext}"
+                back_up_path = directory / f"{stem}_{count}.png"
                 count += 1
 
-        cv2.imwrite(str(write_path), censored_image)
+        try:
+            cv2.imwrite(str(write_path), censored_image)
+        except cv2.error as e:
+            # write failed, attempt to write as png
+            try:
+                logger.warning(f"Failed to write image '{write_path.stem}' as '{write_path.suffix}'. Attempting to write as '.png' instead.")
+                cv2.imwrite(str(back_up_path), censored_image)
+            except:
+                # failed again, skip writing and raise original error
+                raise e
 
     return censored_image
