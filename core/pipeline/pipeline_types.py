@@ -10,7 +10,7 @@ from shapely import Polygon
 
 from ..datatypes import RawBox, CensorConfig
 
-ImageInput = Path | str | np.ndarray
+ImageInput = Path | str | np.ndarray | bytes
 
 
 DEFAULT_CENSOR_CONFIG: CensorConfig|None = None
@@ -35,6 +35,8 @@ class Job:
         image:              The image to process - path on disk or a loaded np.ndarray.
         job_id:             Unique identifier. Auto-generated if not supplied.
         output_path:        Where to write the result image. None → don't write.
+        return_bytes:       Whether the result image should be returned as bytes.
+        output_extension:   How to encode the image if it is returned as bytes (only used if return_bytes is True).
         override_cache:     Whether to ignore the cached elements for this image
         early_exit:         If True, return after the cache write (step 7) and skip
                             image modification, save, and the full ProcessedResult.
@@ -57,6 +59,8 @@ class Job:
     job_id: Any = field(default_factory=lambda: str(uuid.uuid4()))
     output_path: Path | str | None = None
 
+    return_bytes: bool = False
+    output_extension: str = '.png'
     override_cache: bool = False
     early_exit: bool = False
     skip_cache_write: bool = False
@@ -97,7 +101,7 @@ class ProcessedResult:
                 features     — postprocessed features
                 bodies       — postprocessed bodies (may be None)
         """
-    image: np.ndarray
+    image: np.ndarray | bytes
     output_path: Path | None
     features: list[list[RawBox]]
     bodies: list[list[Polygon]] | None

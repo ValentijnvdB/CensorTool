@@ -25,16 +25,19 @@ def _process_one(job: Job, gpu_queue: Queue[GPURequest]) -> Job:
         job.time_taken = times
         return job
 
-    output_path = Path(job.output_path) if isinstance(job.output_path, str) else job.output_path
+    output_path = None
+    if job.output_path is not None:
+        output_path = Path(job.output_path)
 
     if job.image is None:
         raise ValueError("No image provided.")
 
     try:
         # --- Step 1: load ---
-        if isinstance(job.image, np.ndarray):
-            image = job.image
-        else:
+        image = job.image
+        if isinstance(image, bytes):
+            image = cv2.imdecode(np.frombuffer(image, np.uint8), cv2.IMREAD_UNCHANGED)
+        elif isinstance(image, str|Path):
             image = load_image(job.image)
 
         times.append( ('load_image', time.perf_counter_ns()) )
@@ -112,6 +115,9 @@ def _process_one(job: Job, gpu_queue: Queue[GPURequest]) -> Job:
 
         # --- Steps 8–9: modify image + write to disk ---
         modified_image = apply_censor(image, cached, job.output_path, job.config)
+
+        if job.return_bytes:
+            modified_image = bytes(cv2.imencode(ext=job.output_extension, img=modified_image)[1])
 
         times.append(('apply censor', time.perf_counter_ns()))
 
