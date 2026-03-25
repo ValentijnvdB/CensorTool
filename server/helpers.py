@@ -27,6 +27,26 @@ def stop_pipeline():
     _pipeline.stop()
 
 
+async def submit_video_job(video: Path, output_path: Path, early_exit: bool, censor_config: CensorConfig|None) -> Job:
+    avi_path = output_path.parent / (output_path.stem + '.avi')
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    job = VideoJob(
+        job_id=video.stem,
+        video=video,
+        output_path=output_path,
+        avi_path=avi_path,
+        early_exit=early_exit,
+        override_cache=False,
+        skip_cache_write=False,
+        cache_base_dir=server_config.CACHE_DIR
+    )
+    if censor_config is not None:
+        job.config = censor_config
+
+    return censor_video(job, _pipeline)
+
+
 async def submit_gif_job(image: bytes, output_path: Path|None, early_exit: bool, censor_config: CensorConfig|None) -> Job:
     job_id = str(uuid.uuid4())
     input_path: Path = constants.data_root / 'server' / 'input_gif' / (job_id + '.gif')
@@ -37,21 +57,7 @@ async def submit_gif_job(image: bytes, output_path: Path|None, early_exit: bool,
     if output_path is None:
         output_path = constants.data_root / 'server' / 'gifs' / (job_id + '.gif')
 
-    avi_path = output_path.parent / (job_id + '.avi')
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    job = VideoJob(
-        job_id=job_id,
-        video=input_path,
-        output_path=output_path,
-        avi_path=avi_path,
-        early_exit=early_exit,
-        override_cache=False,
-        skip_cache_write=False,
-        cache_base_dir=server_config.CACHE_DIR,
-        config=censor_config
-    )
-    return censor_video(job, _pipeline)
+    return await submit_video_job(input_path, output_path, early_exit, censor_config=censor_config)
 
 
 

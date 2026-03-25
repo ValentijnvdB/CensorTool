@@ -23,11 +23,10 @@ def construct_censor_config(form_config: dict[str, Any]) -> CensorConfig:
     Dictionary must have the shape as in the default_censor_config.yml
     ```
     {
-        'features_to_censor': [ <list_of_features> ],
-        'default_censor_config': { <censor_box> },
-        'feature_overrides' { <feature1>: <(partial) censor_box1>, <feature2>: <(partial) censor_box2>, ... },
+        features_to_censor: [ <list_of_features> ],
+        default_censor_config: { <censor_box> },
+        feature_overrides: { <feature1>: <(partial) censor_box1>, <feature2>: <(partial) censor_box2>, ... },
 
-        'merge_overlapping_censor_boxes': <bool>,
         merge_overlapping_censor_boxes: <bool>
         merge_overlapping_borders: <bool>
         enable_overlays: <bool>

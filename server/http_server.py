@@ -1,23 +1,27 @@
 import asyncio
 import hashlib
+import json
 import ssl
 import time
 import traceback
 from collections import deque
 from concurrent.futures import Future, wait, FIRST_COMPLETED
+from pathlib import Path
 
+import aiofiles
 import aiohttp_cors
 from aiohttp import web
 
 from loguru import logger
 
 import constants
-from core import Job
+from core import Job, construct_censor_config
 
 from . import request_reader as rr
-from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job
+from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
+    submit_video_job
 from .response_constructor import construct_response
-from .server_config import CACHE_DIR, CENSORED_PATH
+from .server_config import CACHE_DIR, CENSORED_PATH, UPLOAD_DIR
 
 
 async def censor_image(request):
@@ -57,7 +61,60 @@ async def censor_image(request):
         return web.json_response({'error': str(e)}, status=500)
 
 
+async def censor_video(request):
+    """Censor a video in one go."""
+    reader = await request.multipart()
+    config = None
+    filename = 'video.mp4'
+    path = UPLOAD_DIR / filename
+
+    # Receive the video
+    while True:
+        part = await reader.next()
+        if part is None: break
+        if part.name == 'config':
+            config = json.loads(await part.text())
+        elif part.name == 'filename':
+            filename = await part.text()
+        elif part.name == 'video':
+            path = UPLOAD_DIR / filename
+            async with aiofiles.open(path, mode='wb') as f:
+                while True:
+                    chunk = await part.read_chunk()
+                    if not chunk: break
+                    await f.write(chunk)
+
+    # Censor the video
+    output_path = CENSORED_PATH / filename
+    if config is not None:
+        config = construct_censor_config(config)
+    result = await submit_video_job(video=path, output_path=output_path, censor_config=config, early_exit=False)
+    if not result.success:
+        logger.warning(f"Error censoring video: {str(result.error)}")
+        return web.json_response({'error': str(result.error)}, status=500)
+
+    output_path: Path = result.result
+
+    # Stream the modified video back
+    response = web.StreamResponse(
+        status=200,
+        reason='OK',
+        headers={'Content-Type': 'video/mp4'}
+    )
+    await response.prepare(request)
+
+    async with aiofiles.open(output_path, mode='rb') as f:
+        while True:
+            chunk = await f.read(1024 * 64)  # Read 64KB chunks
+            if not chunk:
+                break
+            await response.write(chunk)
+
+    return response
+
+
 async def censor_frame(request):
+    """Censor a video frame-by-frame. Used for real-time censoring."""
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -213,6 +270,7 @@ async def init_app():
     # Add routes
     app.router.add_post('/censor_image', censor_image)
     app.router.add_post('/detect_features', detect_features)
+    app.router.add_post('/censor_video', censor_video)
 
     app.router.add_get('/censor_frame', censor_frame)
     app.router.add_get('/reset_cache', reset_cache)
