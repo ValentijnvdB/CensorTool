@@ -40,7 +40,7 @@ def get_image_path_from_url(url: str, extension: str = None) -> Path:
         extension = parsed_url.path.rsplit('.', 1)[-1]
     if not extension.startswith('.'):
         extension = '.' + extension
-    if extension not in constants.IMAGE_EXT:
+    if extension not in constants.IMAGE_EXT and extension != '.gif':
         raise Exception(f"Invalid image extension: '{extension}'")
     filename = str(hash_bytes(url.encode('utf-8'), 32)) + extension
     return UPLOAD_DIR / filename

@@ -1,5 +1,10 @@
 import asyncio
+import hashlib
 import ssl
+import time
+import traceback
+from collections import deque
+from concurrent.futures import Future, wait, FIRST_COMPLETED
 
 import aiohttp_cors
 from aiohttp import web
@@ -7,9 +12,10 @@ from aiohttp import web
 from loguru import logger
 
 import constants
+from core import Job
 
 from . import request_reader as rr
-from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job
+from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job
 from .response_constructor import construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH
 
@@ -22,22 +28,121 @@ async def censor_image(request):
         output_path = None
         if exp_response == 'url':
             output_path = CENSORED_PATH / image_path.name
-        result = submit_censoring_job(image_bytes, output_path, censor_config)
+
+        is_gif = image_path.suffix == '.gif'
+
+        if is_gif:
+            result = await submit_gif_job(image_bytes, output_path, False, censor_config)
+        else:
+            _, future = submit_censoring_job(image_bytes, image_path.suffix, output_path, censor_config)
+            result: Job = future.result()
 
         if not result.success:
             logger.warning(f"Error censoring image: {str(result.error)}")
             return web.json_response({'error': str(result.error)}, status=500)
 
+        if is_gif:
+            image = result.result
+        else:
+            image = result.result.image
+
         return construct_response(expected_response=exp_response,
-                                  image=result.image,
+                                  image=image,
                                   extension=image_path.suffix,
                                   image_path=output_path,
                                   name=image_path.name)
 
     except Exception as e:
-        logger.error(f"Error censoring image: {e}")
+        logger.error(f"Error censoring image: {e}. Stacktrace: {traceback.format_exc()}")
         return web.json_response({'error': str(e)}, status=500)
 
+
+async def censor_video(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    HEADER_SIZE = 13
+    img_hashes: dict[str, str] = {}
+    frames: dict[str, bytes] = {}
+
+    headers: dict[str, bytes] = {}
+    jobs: dict[str, Job] = {}
+    futures: dict[str, Future] = {}
+
+    frames_send = deque()
+
+    def cancel_all():
+        for k, f in futures.items():
+            f.cancel()
+            jobs[k].cancelled.set()
+        futures.clear()
+        jobs.clear()
+        headers.clear()
+
+    async def send_frame_back(job_id: str):
+        frames_send.append(time.time())
+        buffer = jobs[job_id].result.image
+        header = headers[job_id]
+        img_hash = img_hashes[job_id]
+        frames[img_hash] = buffer
+        await ws.send_bytes(header + buffer)
+        del futures[job_id]
+        del jobs[job_id]
+        del headers[job_id]
+        del img_hashes[job_id]
+
+    def update_fps():
+        if len(frames_send) > 0:
+            threshold = 10
+            time_threshold = time.time() - threshold
+            while frames_send and frames_send[0] < time_threshold:
+                frames_send.popleft()
+            fps = len(frames_send) / threshold if frames_send else 0
+            logger.info(f"Current fps: {fps}. Active jobs: {len(futures)}")
+
+    async def receiver():
+        async for msg in ws:
+            if msg.type == web.WSMsgType.BINARY:
+                header_bytes = msg.data[:HEADER_SIZE]
+
+                if header_bytes[0] == 1:
+                    logger.info("Cancelled all jobs")
+                    cancel_all()
+                    continue
+
+                image_bytes = msg.data[HEADER_SIZE:]
+                image_hash = hashlib.sha256(image_bytes).hexdigest()
+
+                if image_hash in frames:
+                    logger.info("Already seen this frame, returning cached")
+                    frames_send.append(time.time())
+                    await ws.send_bytes(header_bytes + frames[image_hash])
+                    update_fps()
+                    continue
+
+                job, future = submit_censoring_job(image_bytes, '.webp', None, None)
+                futures[job.job_id] = future
+                jobs[job.job_id] = job
+                headers[job.job_id] = header_bytes
+                img_hashes[job.job_id] = image_hash
+
+            elif msg.type in (web.WSMsgType.CLOSE, web.WSMsgType.ERROR):
+                break
+
+    async def sender():
+        while not ws.closed:
+            for job_id in list(futures.keys()):
+                if futures[job_id].done():
+                    try:
+                        await send_frame_back(job_id)
+                    except Exception as e:
+                        logger.error(f"Error sending frame for job {job_id}: {e}")
+            update_fps()
+            await asyncio.sleep(0.005)  # ~200hz poll, tune to your needs
+
+    await asyncio.gather(receiver(), sender())
+
+    return ws
 
 
 async def detect_features(request):
@@ -48,7 +153,8 @@ async def detect_features(request):
         output_path = None
         if exp_response == 'url':
             output_path = CENSORED_PATH / image_path.name
-        result = submit_detection_job(image_bytes, output_path, censor_config)
+        _, future = submit_detection_job(image_bytes, image_path.suffix, output_path, censor_config)
+        result: Job = future.result()
 
         # Create JSON response with detected features
         response_data = {
@@ -108,6 +214,7 @@ async def init_app():
     app.router.add_post('/censor_image', censor_image)
     app.router.add_post('/detect_features', detect_features)
 
+    app.router.add_get('/censor_video', censor_video)
     app.router.add_get('/reset_cache', reset_cache)
 
     app.router.add_static('/censored', path=CENSORED_PATH)
@@ -120,9 +227,9 @@ async def init_app():
     return app
 
 
-def start_server(host: str = 'localhost', port: int = 8443, use_https: bool = False, cert_file: str = 'cert.pem', key_file: str = 'key.pem'):
+def start_server(host: str = 'localhost', port: int = 8443, use_https: bool = False, cert_file: str = 'cert.pem', key_file: str = 'key.pem', debug: bool = False):
 
-    start_pipeline()
+    start_pipeline(debug=debug)
 
     try:
         asyncio.run(run(host, port, use_https, cert_file, key_file))

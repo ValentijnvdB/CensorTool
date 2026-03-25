@@ -128,9 +128,9 @@ def start_live_censor(mode: str, device_id: int, use_vcam: bool, vcam_width: int
     start_live_censor(mode, device_id, use_vcam, vcam_width, vcam_height, vcam_fps)
 
 
-def serve_http(host, port, ssl_file, ssl_key):
+def serve_http(host, port, ssl_file, ssl_key, debug):
     from server import http_server
-    http_server.start_server(host=host, port=port, use_https=True, cert_file=ssl_file, key_file=ssl_key)
+    http_server.start_server(host=host, port=port, use_https=True, cert_file=ssl_file, key_file=ssl_key, debug=debug)
 
 
 def get_mode_overview():
@@ -240,7 +240,7 @@ def main():
                     censor_config=args.censor_config)
 
     elif args.mode in ['http', 'https']:
-        serve_http(args.host, args.port, args.ssl_cert, args.ssl_key)
+        serve_http(args.host, args.port, args.ssl_cert, args.ssl_key, args.debug)
 
     else:
         raise ValueError(f'Unknown mode: {args.mode}')

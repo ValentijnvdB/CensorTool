@@ -39,10 +39,13 @@ def _construct_base64_response(image: bytes, extension: str) -> Response:
     return web.json_response(body)
 
 
-def construct_response(expected_response: str, image: bytes|np.ndarray, extension: str, image_path: Path=None, name: str=None) -> Response:
+def construct_response(expected_response: str, image: bytes|np.ndarray|Path, extension: str, image_path: Path=None, name: str=None) -> Response:
     """Returns the response in the expected format. Choices: 'bytes', 'url', or 'base64'."""
     if isinstance(image, np.ndarray):
         image = utils.np_to_bytes(image, extension)
+    if isinstance(image, Path):
+        with open(image, 'rb') as f:
+            image = f.read()
 
     if expected_response == 'bytes':
         return _construct_bytes_response(image, name=name)
