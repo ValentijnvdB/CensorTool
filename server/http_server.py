@@ -57,7 +57,7 @@ async def censor_image(request):
         return web.json_response({'error': str(e)}, status=500)
 
 
-async def censor_video(request):
+async def censor_frame(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -138,7 +138,7 @@ async def censor_video(request):
                     except Exception as e:
                         logger.error(f"Error sending frame for job {job_id}: {e}")
             update_fps()
-            await asyncio.sleep(0.005)  # ~200hz poll, tune to your needs
+            await asyncio.sleep(0.005)
 
     await asyncio.gather(receiver(), sender())
 
@@ -214,7 +214,7 @@ async def init_app():
     app.router.add_post('/censor_image', censor_image)
     app.router.add_post('/detect_features', detect_features)
 
-    app.router.add_get('/censor_video', censor_video)
+    app.router.add_get('/censor_frame', censor_frame)
     app.router.add_get('/reset_cache', reset_cache)
 
     app.router.add_static('/censored', path=CENSORED_PATH)
