@@ -8,8 +8,7 @@ import numpy as np
 import pyautogui
 from loguru import logger
 
-from core import models, draw, process_multiple_passes, censor_image_from_boxes, Box, ProcessedResult
-
+from core import py_censor_core as cc
 from ..config import CONFIG
 
 from .utils import get_next_frame, push_frame, interpolate_images

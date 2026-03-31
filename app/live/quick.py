@@ -1,17 +1,17 @@
-import hashlib
 import time
 import traceback
 from collections import deque
-from concurrent.futures import FIRST_COMPLETED, wait, Future
+from pathlib import Path
 from threading import Event
 from typing import Any
 
 import cv2
 import numpy as np
 import pyautogui
+import yaml
 from loguru import logger
 
-from core import CensorConfig, ImagePipeline, Job, ImageInput, ProcessedResult, draw
+from core import py_censor_core as cc
 
 from ..config import CONFIG
 
@@ -30,29 +30,27 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
     prev_image_sum = 0
     previous_censored_screenshots: np.ndarray = None
 
-    censor_config, file_hash, _ = reload_config(None, '', force=True)
+    # censor_config, file_hash, _ = reload_config(None, '', force=True)
+    with open("./personal_default_censor_config.yml", 'r') as f:
+        censor_config = yaml.safe_load(f)
 
-    with ImagePipeline(max_workers=CONFIG.n_workers) as pipeline:
-        futures: dict[float, Future] = {}
+    with cc.ImagePipeline(max_workers=CONFIG.n_workers) as pipeline:
+        futures: list[cc.JobHandle] = []
         cancel_events: dict[float, Event] = {}
-        def add_image(image_or_path: ImageInput, ts: float, image_sum: int, cc: CensorConfig) -> None:
+        def add_image(image_or_path: np.ndarray, ts: float) -> None:
             """Drop-in callback for your external API."""
             c_event = Event()
-            job = Job(
+            job = cc.Job(
                 image=image_or_path,
                 timestamp=ts,
                 output_path=None,
                 early_exit=False,
                 override_cache=False,
                 skip_cache_write=True,
-                sizes=CONFIG.picture_sizes,
-                cancelled=c_event,
-                data={
-                    'sum': image_sum
-                },
-                config=cc
+                config=censor_config,
+                size=1280
             )
-            futures[ts] = pipeline.submit(job)
+            futures.append(pipeline.submit(job))
             cancel_events[ts] = c_event
 
         start_times: deque[float] = deque()
@@ -74,7 +72,7 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
                 start_times.append(time.time())
 
                 # reload box_config if it has changed
-                censor_config, file_hash, reloaded_config = reload_config(censor_config, file_hash, force=force_reload)
+                # censor_config, file_hash, reloaded_config = reload_config(censor_config, file_hash, force=force_reload)
                 force_reload = False
 
                 timestamp, screenshot = get_next_frame(vid_cap)
@@ -82,41 +80,31 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
                 # compute sum to compare against previous
                 new_sum = np.sum(screenshot)
 
-                force_update = errored or reloaded_config
+                force_update = errored # or reloaded_config
                 if force_update or new_sum != prev_image_sum:
                     # Submit the screenshot for censoring
-                    add_image(screenshot, timestamp, new_sum, censor_config)
+                    add_image(screenshot, timestamp)
 
                     # Block until at least one analyzes job is done
-                    done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
-
-                    # look for the finished job with the lowest frame_number
-                    for job_id, future in futures.items():
-                        if future in done:
-                            completed: Job = future.result()
-                            del futures[job_id]
-                            del cancel_events[job_id]
-                            break
+                    done = cc.wait_any(futures)
+                    completed = done.wait()
+                    futures.remove(done)
 
                     if completed is None or not completed.success:
                         continue
 
                     result = completed.result
-                    assert isinstance(result, ProcessedResult)
                     result_timestamp = completed.timestamp
-                    prev_image_hash = completed.data.get('hash')
-                    prev_image_sum = completed.data.get('sum')
-                    frame = result.image
+                    frame = result["image"]
                     previous_censored_screenshots = frame.copy()
 
                     # cancel all jobs for screenshots taken before the completed
-                    for t in cancel_events:
-                        if result_timestamp < t:
-                            break
-                        logger.debug(f'Cancelling job {t}')
-                        cancel_events[t].set()
-                        del cancel_events[t]
-                        del futures[t]
+                    # for t in cancel_events:
+                    #     if result_timestamp < t:
+                    #         break
+                    #     logger.debug(f'Cancelling job {t}')
+                    #     cancel_events[t].set()
+                    #     del cancel_events[t]
                 else:
                     # if nothing changed on screen, we still want to update in case of mouse movements.
                     frame = previous_censored_screenshots.copy()
@@ -142,8 +130,8 @@ def quick_live_censor(stop_event: Event, reload_config, output_device: Any, vid_
                         fps = 10 / (time.time() - start_times[0])
                     except ZeroDivisionError:
                         fps = 0
-                    draw.annotate_image(frame, f"frames: {frames_put_out}", 0)
-                    draw.annotate_image(frame, f"FPS: {fps}", 2)
+                    # draw.annotate_image(frame, f"frames: {frames_put_out}", 0)
+                    # draw.annotate_image(frame, f"FPS: {fps}", 2)
 
 
                 push_frame(output_device, frame)

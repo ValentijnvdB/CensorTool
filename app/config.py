@@ -149,7 +149,7 @@ def init_configs(config_file: str|Path|None = None,
 
     DEFAULT_CENSOR_CONFIG = load_censor_config_from_file(default_censor_config)
     CONFIG = load_config(config_file, debug)
-    core.set_default_censor_config(DEFAULT_CENSOR_CONFIG)
+    # core.set_default_censor_config(DEFAULT_CENSOR_CONFIG)
 
 
 

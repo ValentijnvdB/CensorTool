@@ -7,11 +7,11 @@ from loguru import logger
 
 import constants
 
-from core import CensorConfig, ProcessedResult
+from core import CensorConfig
 from ..config import CONFIG, censor_config_has_changed, load_censor_config_from_file_w_hash
 
-from .censor import censor_loop
-from .detect import detect_loop
+# from .censor import censor_loop
+# from .detect import detect_loop
 from .quick import quick_live_censor
 
 

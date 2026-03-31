@@ -1,5 +1,6 @@
-from concurrent.futures import Future, wait, FIRST_COMPLETED
+from core import py_censor_core as cc
 
+import yaml
 from tqdm import tqdm
 
 from ..config import CONFIG, load_censor_config_from_file
@@ -24,27 +25,32 @@ def censor_images(
     :param only_analyze: whether to only analyze the images for features and bodies.
     :param censor_config: the censoring configuration.
     """
-    futures: dict[str, Future] = {}
+    futures: list = []
     success_count = 0
     error_count = 0
 
     if isinstance(censor_config, dict):
-        censor_config = CensorConfig(**censor_config)
+        # censor_config = CensorConfig(**censor_config)
+        raise NotImplementedError("Temporary unsupported")
     else:
-        censor_config = load_censor_config_from_file(censor_config)
+        with open(censor_config, "r") as f:
+            censor_config = yaml.safe_load(f)
+        import json
+        print(json.dumps(censor_config, indent=2))
+        # censor_config = load_censor_config_from_file(censor_config)
 
-    with ImagePipeline(max_workers=CONFIG.n_workers) as pl:
-        def add_image(image_or_path: ImageInput, save_path: Path|None) -> bool:
+    with cc.ImagePipeline(max_workers=CONFIG.n_workers) as pl:
+        def add_image(image_or_path: Path, save_path: Path|None) -> bool:
             """Drop-in callback for your external API."""
-            job = Job(
-                image=image_or_path,
-                output_path=save_path,
+            job = cc.Job(
+                image=str(image_or_path),
+                output_path=str(save_path),
                 early_exit=only_analyze,
                 override_cache=override_cache,
-                sizes=CONFIG.picture_sizes,
-                config=censor_config
+                config=censor_config,
+                size=0
             )
-            futures[save_path.name] = pl.submit(job)
+            futures.append( pl.submit(job) )
             return True
 
         current_image: int = 0
@@ -67,23 +73,17 @@ def censor_images(
         pbar = tqdm(total=len(image_paths))
         while futures:
             # Block until at least one analyzes job is done
-            done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
-
-            # look for the finished job with the lowest frame_number
-            for job_id, future in futures.items():
-                if future in done:
-                    completed: Job = future.result()
-                    del futures[job_id]
-                    break
+            done = cc.wait_any(futures)
+            completed = done.wait()
+            futures.remove(done)
 
             # process result
             if completed.success:
                 success_count += 1
+                # logger.info(f"features: {len(completed.result['features'])}")
             else:
                 error_count += 1
                 log_str = f"[{completed.job_id}] error: {completed.error}."
-                if CONFIG.debug:
-                    log_str += f" stacktrace: {completed.stacktrace}"
                 logger.error(log_str)
 
             pbar.update(1)
