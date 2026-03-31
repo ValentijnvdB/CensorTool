@@ -20,32 +20,6 @@ FEATURE = Literal['exposed_anus','exposed_armpits','covered_belly','exposed_bell
             'face_femme','face_masc','covered_feet','exposed_feet','covered_breast','exposed_breast',
             'covered_vulva','exposed_vulva','exposed_chest','exposed_penis','eyes_femme','eyes_masc']
 
-@dataclass
-class CensorBox:
-    censor_style: CENSOR_STYLE
-    width_area_safety: float
-    height_area_safety: float
-    time_safety: float
-    border: BORDER_TYPE
-    overlay: OVERLAY_TYPE
-    min_prob: float
-    shape: Literal['default', 'ellipse', 'circle', 'rectangle']
-    inverse: bool
-    intersect_human: bool
-
-
-@dataclass
-class CensorConfig:
-    features_to_censor: dict[FEATURE, CensorBox]
-
-    merge_overlapping_censor_boxes: bool
-    merge_overlapping_borders: bool
-    enable_overlays: bool
-    force_inverse_censor: bool
-    inverse_censor_style: INVERSE_CENSOR_STYLE
-
-    enable_watermark: bool
-
 ######################################### CENSOR_STYLE #########################################
 
 @dataclass
@@ -72,7 +46,6 @@ class CSDebug:
 CENSOR_STYLE         = CSBlur | CSPixel | CSBar | CSAIRemove | CSDebug
 INVERSE_CENSOR_STYLE = CSBlur | CSPixel | CSBar
 
-
 ############################################ OVERLAY ############################################
 
 @dataclass
@@ -91,7 +64,6 @@ class OVSticker:
 
 OVERLAY_TYPE = OVText | OVSticker | None
 
-
 ############################################ BORDER #############################################
 
 @dataclass
@@ -100,3 +72,33 @@ class Border:
     thickness: int
 
 BORDER_TYPE = Border | None
+
+
+############################################ MAIN TYPES #############################################
+
+@dataclass
+class CensorBox:
+    censor_style: CENSOR_STYLE
+    width_area_safety: float
+    height_area_safety: float
+    time_safety: float
+    border: BORDER_TYPE
+    overlay: OVERLAY_TYPE
+    min_prob: float
+    shape: Literal['default', 'ellipse', 'circle', 'rectangle']
+    inverse: bool
+    intersect_human: bool
+
+
+@dataclass
+class CensorConfig:
+    features_to_censor: dict[FEATURE, CensorBox]
+
+    merge_overlapping_censor_boxes: bool
+    merge_overlapping_borders: bool
+    enable_overlays: bool
+    force_inverse_censor: bool
+    inverse_censor_style: INVERSE_CENSOR_STYLE
+
+    enable_watermark: bool
+

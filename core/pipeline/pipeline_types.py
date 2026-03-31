@@ -27,6 +27,60 @@ class Elements:
 
 
 @dataclass
+class PreprocessedData:
+    """Everything a CPU worker produces before handing off to the GPU thread."""
+    adj_images: list[np.ndarray]
+    scales: list[float]
+    # Filled in by GPU thread, then read back by the CPU worker:
+    reply_queue: Queue = field(default_factory=Queue)
+
+
+@dataclass
+class GPURequest:
+    data: PreprocessedData
+    need_features: list[bool]
+    need_bodies: list[bool]
+
+
+@dataclass
+class GPUIntermediateResult:
+    data: PreprocessedData
+    raw_features: list[RawBox] | None
+    need_bodies: list[bool]
+    error: Exception | None = None
+
+
+@dataclass
+class GPUResult:
+    raw_features: Any | None
+    raw_bodies: Any | None
+    error: Exception | None = None
+
+
+@dataclass
+class ProcessedResult:
+    """
+            Returned for every job regardless of early_exit.
+
+            When early_exit=False:
+                image        — the censored image
+                output_path  — where it was saved, or None
+                features     — postprocessed features
+                bodies       — postprocessed bodies (may be None)
+
+            When early_exit=True:
+                image        — the original unmodified image
+                output_path  — always None (save was skipped)
+                features     — postprocessed features
+                bodies       — postprocessed bodies (may be None)
+        """
+    image: np.ndarray | bytes
+    output_path: Path | None
+    features: list[list[RawBox]]
+    bodies: list[list[Polygon]] | None
+
+
+@dataclass
 class Job:
     """
     Submitted by the caller; travels through the whole pipeline unchanged.
@@ -81,56 +135,3 @@ class Job:
     stacktrace: str | None = None
     result: ProcessedResult | None = None
     time_taken: list[tuple[str, int]] | None = None
-
-
-
-@dataclass
-class ProcessedResult:
-    """
-            Returned for every job regardless of early_exit.
-
-            When early_exit=False:
-                image        — the censored image
-                output_path  — where it was saved, or None
-                features     — postprocessed features
-                bodies       — postprocessed bodies (may be None)
-
-            When early_exit=True:
-                image        — the original unmodified image
-                output_path  — always None (save was skipped)
-                features     — postprocessed features
-                bodies       — postprocessed bodies (may be None)
-        """
-    image: np.ndarray | bytes
-    output_path: Path | None
-    features: list[list[RawBox]]
-    bodies: list[list[Polygon]] | None
-
-
-@dataclass
-class PreprocessedData:
-    """Everything a CPU worker produces before handing off to the GPU thread."""
-    adj_images: list[np.ndarray]
-    scales: list[float]
-    # Filled in by GPU thread, then read back by the CPU worker:
-    reply_queue: Queue = field(default_factory=Queue)
-
-
-@dataclass
-class GPURequest:
-    data: PreprocessedData
-    need_features: list[bool]
-    need_bodies: list[bool]
-
-@dataclass
-class GPUIntermediateResult:
-    data: PreprocessedData
-    raw_features: list[RawBox] | None
-    need_bodies: list[bool]
-    error: Exception | None = None
-
-@dataclass
-class GPUResult:
-    raw_features: Any | None
-    raw_bodies: Any | None
-    error: Exception | None = None
