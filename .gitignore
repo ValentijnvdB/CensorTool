@@ -6,3 +6,4 @@
 /data/**
 !/data/assets/
 !/data/assets/**
+/.env
