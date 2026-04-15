@@ -9,7 +9,7 @@ import numpy as np
 import pyautogui
 from loguru import logger
 
-import py_censor_core as cc
+import censor_core as cc
 
 from input_devices.generic import InputDevice
 from output_devices.generic import OutputDevice

@@ -14,7 +14,7 @@ from aiohttp import web
 from loguru import logger
 
 import constants
-import py_censor_core as cc
+import censor_core as cc
 
 from . import request_reader as rr
 from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \

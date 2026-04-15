@@ -5,7 +5,7 @@ import numpy as np
 
 import constants
 
-import py_censor_core as cc
+import censor_core as cc
 
 from . import utils, server_config
 
@@ -26,7 +26,6 @@ def start_pipeline(debug: bool):
 
 def stop_pipeline():
     _image_pipeline.stop()
-    _video_pipeline.stop()
 
 
 async def submit_video_job(video_path: Path, output_path: Path, early_exit: bool, censor_config: dict | None) -> cc.VideoJob:

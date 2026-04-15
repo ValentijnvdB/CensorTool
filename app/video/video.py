@@ -8,7 +8,7 @@ from loguru import logger
 import constants
 from ..config import *
 
-import py_censor_core as cc
+import censor_core as cc
 
 
 def censor_videos(

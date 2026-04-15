@@ -1,4 +1,4 @@
-import py_censor_core as cc
+import censor_core as cc
 
 import yaml
 from tqdm import tqdm

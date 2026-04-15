@@ -5,7 +5,7 @@ from typing import Literal, Any
 import yaml
 from loguru import logger
 
-import py_censor_core as cc
+import censor_core as cc
 
 from utils import hash_utils
 
@@ -22,8 +22,6 @@ class LiveCensorConfig:
     show_fps: bool = False
     interpolate_frames: bool = False
     cursor_color: tuple[int, int, int] = (168, 93, 253)
-
-    delay: float = 0.2 # only used if mode == 'precise'
 
 
 @dataclass
