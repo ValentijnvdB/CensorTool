@@ -5,7 +5,6 @@ import ssl
 import time
 import traceback
 from collections import deque
-from concurrent.futures import Future, wait, FIRST_COMPLETED
 from pathlib import Path
 
 import aiofiles
@@ -39,7 +38,7 @@ async def censor_image(request):
         if is_gif:
             result = await submit_gif_job(image_bytes, output_path, False, censor_config)
         else:
-            _, future = submit_censoring_job(image_bytes, image_path.suffix, output_path, censor_config)
+            _, future = submit_censoring_job(image_bytes, output_path, censor_config)
             result: cc.Job = future.wait()
 
         if not result.success:
@@ -90,7 +89,7 @@ async def censor_video(request):
     output_path = CENSORED_PATH / filename
     # if config is not None:
     #     config = construct_censor_config(config)
-    result = await submit_video_job(video=path, output_path=output_path, censor_config=config, early_exit=False)
+    result = await submit_video_job(video_path=path, output_path=output_path, censor_config=config, early_exit=False)
     if not result.success:
         logger.warning(f"Error censoring video: {str(result.error)}")
         return web.json_response({'error': str(result.error)}, status=500)
