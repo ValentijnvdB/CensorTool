@@ -15,13 +15,14 @@ from aiohttp import web
 from loguru import logger
 
 import constants
-from core import Job, construct_censor_config
+import py_censor_core as cc
 
 from . import request_reader as rr
 from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
     submit_video_job
 from .response_constructor import construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH, UPLOAD_DIR
+from .utils import np_to_bytes
 
 
 async def censor_image(request):
@@ -39,7 +40,7 @@ async def censor_image(request):
             result = await submit_gif_job(image_bytes, output_path, False, censor_config)
         else:
             _, future = submit_censoring_job(image_bytes, image_path.suffix, output_path, censor_config)
-            result: Job = future.result()
+            result: cc.Job = future.wait()
 
         if not result.success:
             logger.warning(f"Error censoring image: {str(result.error)}")
@@ -48,7 +49,8 @@ async def censor_image(request):
         if is_gif:
             image = result.result
         else:
-            image = result.result.image
+            image = result.result["image"]
+            image = np_to_bytes(image, image_path.suffix)
 
         return construct_response(expected_response=exp_response,
                                   image=image,
@@ -86,8 +88,8 @@ async def censor_video(request):
 
     # Censor the video
     output_path = CENSORED_PATH / filename
-    if config is not None:
-        config = construct_censor_config(config)
+    # if config is not None:
+    #     config = construct_censor_config(config)
     result = await submit_video_job(video=path, output_path=output_path, censor_config=config, early_exit=False)
     if not result.success:
         logger.warning(f"Error censoring video: {str(result.error)}")
@@ -119,31 +121,35 @@ async def censor_frame(request):
     await ws.prepare(request)
 
     HEADER_SIZE = 13
+    EXTENSION = '.webp'
+
     img_hashes: dict[str, str] = {}
     frames: dict[str, bytes] = {}
 
     headers: dict[str, bytes] = {}
-    jobs: dict[str, Job] = {}
-    futures: dict[str, Future] = {}
+    jobs: dict[str, cc.Job] = {}
+    futures: list[cc.JobHandle] = []
 
     frames_send = deque()
 
     def cancel_all():
-        for k, f in futures.items():
-            f.cancel()
-            jobs[k].cancelled.set()
-        futures.clear()
-        jobs.clear()
-        headers.clear()
+        pass
+        # for k, f in futures.items():
+        #     f.cancel()
+        #     jobs[k].cancelled.set()
+        # futures.clear()
+        # jobs.clear()
+        # headers.clear()
 
-    async def send_frame_back(job_id: str):
+    async def send_frame_back(job: cc.Job):
         frames_send.append(time.time())
-        buffer = jobs[job_id].result.image
+        job_id = job.job_id
+        img = job.result["image"]
+        buffer = np_to_bytes(img, EXTENSION)
         header = headers[job_id]
         img_hash = img_hashes[job_id]
         frames[img_hash] = buffer
         await ws.send_bytes(header + buffer)
-        del futures[job_id]
         del jobs[job_id]
         del headers[job_id]
         del img_hashes[job_id]
@@ -177,8 +183,8 @@ async def censor_frame(request):
                     update_fps()
                     continue
 
-                job, future = submit_censoring_job(image_bytes, '.webp', None, None)
-                futures[job.job_id] = future
+                job, future = submit_censoring_job(image_bytes, EXTENSION, None, None)
+                futures.append(future)
                 jobs[job.job_id] = job
                 headers[job.job_id] = header_bytes
                 img_hashes[job.job_id] = image_hash
@@ -188,12 +194,18 @@ async def censor_frame(request):
 
     async def sender():
         while not ws.closed:
-            for job_id in list(futures.keys()):
-                if futures[job_id].done():
-                    try:
-                        await send_frame_back(job_id)
-                    except Exception as e:
-                        logger.error(f"Error sending frame for job {job_id}: {e}")
+            if not futures:
+                await asyncio.sleep(0.005)
+                continue
+
+            done = cc.wait_any(futures)
+            completed = done.wait()
+            futures.remove(done)
+
+            try:
+                await send_frame_back(completed)
+            except Exception as e:
+                logger.error(f"Error sending frame for job {completed.job_id}: {e}")
             update_fps()
             await asyncio.sleep(0.005)
 
@@ -211,7 +223,7 @@ async def detect_features(request):
         if exp_response == 'url':
             output_path = CENSORED_PATH / image_path.name
         _, future = submit_detection_job(image_bytes, image_path.suffix, output_path, censor_config)
-        result: Job = future.result()
+        result: cc.Job = future.result()
 
         # Create JSON response with detected features
         response_data = {

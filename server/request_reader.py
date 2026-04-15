@@ -5,11 +5,8 @@ from urllib.parse import urlparse
 
 import requests
 from loguru import logger
-from typing_extensions import deprecated
 
 import constants
-from app.config import load_config
-from core import construct_censor_config, CensorConfig
 from utils.hash_utils import hash_bytes
 
 from server.server_config import UPLOAD_DIR
@@ -106,7 +103,7 @@ def get_image_from_json(as_json: dict) -> tuple[bytes, Path]:
     return image, path
 
 
-async def read_request(request) -> tuple[bytes, Path, CensorConfig|None, str]:
+async def read_request(request) -> tuple[bytes, Path, dict|None, str]:
     if request.content_type == 'application/json':
         as_json: dict = await request.json()
         image_bytes, image_path = get_image_from_json(as_json)
@@ -117,7 +114,7 @@ async def read_request(request) -> tuple[bytes, Path, CensorConfig|None, str]:
         if 'config' in as_json:
             censor_config = as_json['config']
             logger.debug(censor_config)
-            censor_config = construct_censor_config(censor_config)
+            # censor_config = construct_censor_config(censor_config)
 
         return image_bytes, image_path, censor_config, expected_response
 

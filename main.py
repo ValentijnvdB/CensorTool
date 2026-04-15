@@ -3,6 +3,7 @@ import sys
 import time
 from os import makedirs
 from pathlib import Path
+from typing import Literal
 
 from loguru import logger, _defaults
 
@@ -35,7 +36,14 @@ def format_time(total_ms: float) -> str:
     return time_str
 
 
-def parse_input_path(input_path: Path, extension_filter: list[str]) -> list[Path]:
+def is_image(file: Path) -> bool:
+    return file.suffix in constants.IMAGE_EXT
+
+def is_video(file: Path) -> bool:
+    return file.suffix in constants.VID_EXT
+
+
+def parse_input_path(input_path: Path, recursive: bool) -> dict[Literal['imgs', 'videos'], list[Path]]:
     """
     Checks the input_path, if it is a file return a list with that file.
     Otherwise, return all files with the correct extension.
@@ -43,70 +51,64 @@ def parse_input_path(input_path: Path, extension_filter: list[str]) -> list[Path
     logger.info(f"Using input path: '{input_path}'")
 
     if input_path is None:
-        raise ValueError("Input path is required")
+        raise ValueError("Input path is required!")
     if not input_path.exists():
-        raise ValueError("Input path does not exist")
+        raise ValueError(f"Input path '{input_path}' does not exist!")
 
+    files: dict[Literal['imgs', 'videos'], list[Path]] = {
+        'imgs': [],
+        'videos': []
+    }
     if input_path.is_dir():
-        input_files = [f for f in input_path.glob('**/*') if f.suffix.lower() in extension_filter]
+        glob_arg = "**/*" if recursive else "*"
+        for f in input_path.glob(glob_arg):
+            if not f.is_file(): continue
+            if is_image(f):
+                files['imgs'].append(f)
+            elif is_video(f):
+                files['videos'].append(f)
+
     else:
-        if not input_path.exists():
-            raise FileNotFoundError(f"Input path '{input_path}' does not exist")
-        if input_path.suffix not in extension_filter:
-            raise ValueError(f"Input path has an incorrect extension: '{input_path.suffix}'. Expected: {extension_filter}")
-        return [input_path]
+        if is_image(input_path):
+            files['imgs'].append(input_path)
+        elif is_video(input_path):
+            files['videos'].append(input_path)
 
-    if len(input_files) == 0:
-        raise ValueError("No input files")
+    total_files = len(files['imgs']) + len(files['videos'])
+    if total_files == 0:
+        raise ValueError(f"No input files in '{input_path}'.")
 
-    logger.info(f"Found {len(input_files)} input files.")
-    return input_files
+    logger.info(f"Found {total_files} input files ({len(files['imgs'])} images and {len(files['videos'])} videos).")
+    return files
 
 
-def start_image_censor(input_path: Path, output_path: Path, **kwargs):
+def censor_files(input_path: Path, output_path: Path, recursive: bool, **kwargs):
     from app.image import censor_images
-    logger.info("Censoring images")
-
-    try:
-        input_files = parse_input_path(input_path, constants.IMAGE_EXT)
-    except Exception as e:
-        logger.error(e)
-        return
-
-    start_time = time.perf_counter_ns()
-    censor_images(input_files, output_path, **kwargs)
-    stop_time = time.perf_counter_ns()
-
-    total_ms = (stop_time - start_time) / 1000000
-    time_str = format_time(total_ms)
-
-    logger.info("Censored all images")
-    logger.info(f"Took {time_str} to censor images.")
-
-
-def start_video_censor(input_path: Path, output_path: Path, **kwargs):
     from app.video import censor_videos
-    logger.info("Censoring videos")
+
     try:
-        input_files = parse_input_path(input_path, constants.VID_EXT)
+        input_files = parse_input_path(input_path, recursive)
     except Exception as e:
         logger.error(e)
         return
 
     start_time = time.perf_counter_ns()
-    censor_videos(input_files, output_path, **kwargs)
-    stop_time = time.perf_counter_ns()
+    images = input_files['imgs']
+    videos = input_files['videos']
 
+    if len(images) > 1:
+        logger.info("Censoring images...")
+        censor_images(input_files['imgs'], output_path, **kwargs)
+        logger.info(f"Done with images.")
+    if len(videos) > 1:
+        logger.info("Censoring videos...")
+        censor_videos(input_files['videos'], output_path, **kwargs)
+        logger.info("Done with videos.")
+
+    stop_time = time.perf_counter_ns()
     total_ms = (stop_time - start_time) / 1000000
     time_str = format_time(total_ms)
-
-    logger.info("Censored all videos")
-    logger.info(f"Took {time_str} to censor videos.")
-
-
-def censor_all(*args, **kwargs):
-    start_image_censor(*args, **kwargs)
-    start_video_censor(*args, **kwargs)
+    logger.info(f"Took {time_str} to censor {len(images) + len(videos)} files.")
 
 
 def create_dirs():
@@ -123,9 +125,9 @@ def create_dirs():
     makedirs(constants.model_root, exist_ok=True)
 
 
-def start_live_censor(mode: str, device_id: int, use_vcam: bool, vcam_width: int, vcam_height, vcam_fps:int):
+def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_height, vcam_fps:int, censor_config: Path|str):
     from app.live import start_live_censor
-    start_live_censor(mode, device_id, use_vcam, vcam_width, vcam_height, vcam_fps)
+    start_live_censor(device_id, use_vcam, vcam_width, vcam_height, vcam_fps, censor_config)
 
 
 def serve_http(host, port, ssl_file, ssl_key, debug):
@@ -135,9 +137,7 @@ def serve_http(host, port, ssl_file, ssl_key, debug):
 
 def get_mode_overview():
     return (
-        "'image': censor images."
-        "'video': censor videos. "
-        "'all': censor images and videos. "
+        "'file': censor images and videos from file."
         "'live': real time censoring. "
         "'webcam': real time webcam censoring. "
         "'http: start the http server."
@@ -156,7 +156,6 @@ def main():
 
     # live & webcam mode
     lw_parser = parser.add_argument_group(title='Live & Webcam arguments')
-    lw_parser.add_argument('--live-mode', default='quick', type=str, help='Live mode (quick or precise)')
     lw_parser.add_argument('--device', default=-1, type=int, help='Device to use (only used for live webcam censor).')
     lw_parser.add_argument('--vcam', action='store_true', help='Whether to output to a virtual camera or not.')
     lw_parser.add_argument('--vcam-w', default=1920, type=int, help='Virtual camera width.')
@@ -170,6 +169,7 @@ def main():
                         help='Whether to skip files that already exist in the output directory.')
     flags_parser.add_argument('--only-analyze', action='store_true',
                         help='Whether to only analyze the images and videos (does not apply censoring).')
+    flags_parser.add_argument("-r", "--recursive", action='store_true', help="Recursively censor all files subdirectories of the input directory.")
     flags_parser.add_argument('--debug', action='store_true', help='Whether to enable debug mode.')
 
     # server arguments
@@ -210,34 +210,37 @@ def main():
 
     elif args.mode in ['live']:
         if args.device != -1:
-            logger.warning(f"Device id was given, but is not used with live mode. Using 'webcam' mode if you want to censor a camera..")
-        start_live_censor(args.live_mode, device_id=-1, use_vcam=args.vcam, vcam_width=args.vcam_w, vcam_height=args.vcam_h, vcam_fps=args.vcam_fps)
+            logger.warning(f"Device id was given, but is not used with live mode. Using 'webcam' mode if you want to censor a camera.")
+        start_live_censor(
+            device_id=-1,
+            use_vcam=args.vcam,
+            vcam_width=args.vcam_w,
+            vcam_height=args.vcam_h,
+            vcam_fps=args.vcam_fps,
+            censor_config=args.censor_config
+        )
 
     elif args.mode in ['webcam']:
         if args.device == -1:
             logger.warning(f"No device id provided, using default (0).")
-        start_live_censor('quick', device_id=args.device, use_vcam=args.vcam, vcam_width=args.vcam_w, vcam_height=args.vcam_h, vcam_fps=args.vcam_fps)
+        start_live_censor(
+            device_id=args.device,
+            use_vcam=args.vcam,
+            vcam_width=args.vcam_w,
+            vcam_height=args.vcam_h,
+            vcam_fps=args.vcam_fps,
+            censor_config=args.censor_config
+        )
 
-    elif args.mode in ['image', 'images']:
-        start_image_censor(input_path, output_path,
-                           override_cache=args.override_cache,
-                           skip_existing=args.skip_existing,
-                           only_analyze=args.only_analyze,
-                           censor_config=args.censor_config)
-
-    elif args.mode in ['video', 'videos']:
-        start_video_censor(input_path, output_path,
-                           override_cache=args.override_cache,
-                           skip_existing=args.skip_existing,
-                           only_analyze=args.only_analyze,
-                           censor_config=args.censor_config)
-
-    elif args.mode in ['all']:
-        censor_all(input_path, output_path,
-                    override_cache=args.override_cache,
-                    skip_existing=args.skip_existing,
-                    only_analyze=args.only_analyze,
-                    censor_config=args.censor_config)
+    elif args.mode in ['f', 'file', 'files']:
+        censor_files(
+            input_path, output_path,
+            recursive=args.recursive,
+            override_cache=args.override_cache,
+            skip_existing=args.skip_existing,
+            only_analyze=args.only_analyze,
+            censor_config=args.censor_config
+        )
 
     elif args.mode in ['http', 'https']:
         serve_http(args.host, args.port, args.ssl_cert, args.ssl_key, args.debug)

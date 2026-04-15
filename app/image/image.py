@@ -1,11 +1,11 @@
-from core import py_censor_core as cc
+import py_censor_core as cc
 
 import yaml
 from tqdm import tqdm
+from loguru import logger
 
-from ..config import CONFIG, load_censor_config_from_file
-
-from core import *
+import constants
+from ..config import *
 
 
 def censor_images(
@@ -14,7 +14,7 @@ def censor_images(
         override_cache: bool = False,
         skip_existing: bool = False,
         only_analyze: bool = False,
-        censor_config: dict[str, Any] | Path | str = None) -> None:
+        censor_config: Path | str = None) -> None:
     """
     Censor all images
 
@@ -25,21 +25,18 @@ def censor_images(
     :param only_analyze: whether to only analyze the images for features and bodies.
     :param censor_config: the censoring configuration.
     """
+    if len(image_paths) == 0:
+        return
+
     futures: list = []
     success_count = 0
     error_count = 0
+    skipped_count = 0
 
-    if isinstance(censor_config, dict):
-        # censor_config = CensorConfig(**censor_config)
-        raise NotImplementedError("Temporary unsupported")
-    else:
-        with open(censor_config, "r") as f:
-            censor_config = yaml.safe_load(f)
-        import json
-        print(json.dumps(censor_config, indent=2))
-        # censor_config = load_censor_config_from_file(censor_config)
+    # load config
+    censor_config: dict = read_censor_config_from_file(censor_config)
 
-    with cc.ImagePipeline(max_workers=CONFIG.n_workers) as pl:
+    with cc.ImagePipeline(max_workers=CONFIG.n_workers, mode='s') as pl:
         def add_image(image_or_path: Path, save_path: Path|None) -> bool:
             """Drop-in callback for your external API."""
             job = cc.Job(
@@ -47,8 +44,11 @@ def censor_images(
                 output_path=str(save_path),
                 early_exit=only_analyze,
                 override_cache=override_cache,
+                skip_existing=skip_existing,
+                use_cache=True,
+                cache_base_dir=str(constants.image_cache_path),
                 config=censor_config,
-                size=0
+                size=CONFIG.picture_size
             )
             futures.append( pl.submit(job) )
             return True
@@ -80,11 +80,14 @@ def censor_images(
             # process result
             if completed.success:
                 success_count += 1
-                # logger.info(f"features: {len(completed.result['features'])}")
+                # logger.info(f"features: {len(completed.result['features'])}, bodies: {len(completed.result['bodies'])}")
             else:
                 error_count += 1
                 log_str = f"[{completed.job_id}] error: {completed.error}."
                 logger.error(log_str)
+
+            if completed.skipped:
+                skipped_count += 1
 
             pbar.update(1)
 
@@ -94,5 +97,6 @@ def censor_images(
         pbar.close()
 
     logger.info(f"Censored {success_count} successfully. {error_count} errors. (total {error_count + success_count})")
+    logger.info(f"Skipped: {skipped_count}")
 
 

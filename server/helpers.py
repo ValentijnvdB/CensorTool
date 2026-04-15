@@ -7,13 +7,13 @@ import numpy as np
 import constants
 from app.video.types import VideoJob
 from app.video.video import censor_video
-from core import Job, ImageInput, CensorConfig, ImagePipeline
+import py_censor_core as cc, CensorConfig
 
 from . import utils, server_config
 
 
 # censoring pipeline
-_pipeline = ImagePipeline(max_workers=4)
+_pipeline = cc.ImagePipeline(max_workers=4)
 _debug = False
 
 
@@ -27,7 +27,7 @@ def stop_pipeline():
     _pipeline.stop()
 
 
-async def submit_video_job(video: Path, output_path: Path, early_exit: bool, censor_config: CensorConfig|None) -> Job:
+async def submit_video_job(video: Path, output_path: Path, early_exit: bool, censor_config: CensorConfig|None) -> cc.Job:
     avi_path = output_path.parent / (output_path.stem + '.avi')
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +47,7 @@ async def submit_video_job(video: Path, output_path: Path, early_exit: bool, cen
     return censor_video(job, _pipeline)
 
 
-async def submit_gif_job(image: bytes, output_path: Path|None, early_exit: bool, censor_config: CensorConfig|None) -> Job:
+async def submit_gif_job(image: bytes, output_path: Path|None, early_exit: bool, censor_config: CensorConfig|None) -> cc.Job:
     job_id = str(uuid.uuid4())
     input_path: Path = constants.data_root / 'server' / 'input_gif' / (job_id + '.gif')
     input_path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,25 +61,24 @@ async def submit_gif_job(image: bytes, output_path: Path|None, early_exit: bool,
 
 
 
-def _submit_job(image: bytes, exp_extension: str, output_path: Path|None, early_exit: bool, censor_config: CensorConfig|None) -> tuple[Job, Future[Job]]:
+def _submit_job(image: bytes, exp_extension: str, output_path: Path|None, early_exit: bool, censor_config: dict|None) -> tuple[cc.Job, cc.JobHandle]:
     image: np.ndarray = utils.bytes_to_np(image)
 
     job_id = str(uuid.uuid4())
 
     if output_path is None and _debug:
-        output_path = constants.data_root / 'server' / 'debug' / (job_id + '.png')
+        output_path: Path = constants.data_root / 'server' / 'debug' / (job_id + '.png')
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    job = Job(
+    job = cc.Job(
         job_id=job_id,
         image=image,
-        output_path=output_path,
+        size=640,
+        output_path=str(output_path) if output_path else None,
         early_exit=early_exit,
         override_cache=False,
         skip_cache_write=False,
-        cache_base_dir=server_config.CACHE_DIR,
-        output_extension=exp_extension,
-        return_bytes=True
+        cache_base_dir=server_config.CACHE_DIR
     )
     if censor_config is not None:
         job.config = censor_config
@@ -87,9 +86,9 @@ def _submit_job(image: bytes, exp_extension: str, output_path: Path|None, early_
     return job, _pipeline.submit(job)
 
 
-def submit_censoring_job(image: bytes, exp_extension: str, output_path: Path|None, censor_config: CensorConfig|None) -> tuple[Job, Future[Job]]:
+def submit_censoring_job(image: bytes, exp_extension: str, output_path: Path|None, censor_config: dict|None) -> tuple[cc.Job, cc.JobHandle]:
     return _submit_job(image, exp_extension, output_path, early_exit=False, censor_config=censor_config)
 
-def submit_detection_job(image: bytes, exp_extension: str, output_path: Path|None, censor_config: CensorConfig|None) -> tuple[Job, Future[Job]]:
+def submit_detection_job(image: bytes, exp_extension: str, output_path: Path|None, censor_config: dict|None) -> tuple[cc.Job, cc.JobHandle]:
     return _submit_job(image, exp_extension, output_path, early_exit=True, censor_config=censor_config)
 
