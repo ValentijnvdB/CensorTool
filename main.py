@@ -96,11 +96,11 @@ def censor_files(input_path: Path, output_path: Path, recursive: bool, **kwargs)
     images = input_files['imgs']
     videos = input_files['videos']
 
-    if len(images) > 1:
+    if len(images) > 0:
         logger.info("Censoring images...")
         censor_images(input_files['imgs'], output_path, **kwargs)
         logger.info(f"Done with images.")
-    if len(videos) > 1:
+    if len(videos) > 0:
         logger.info("Censoring videos...")
         censor_videos(input_files['videos'], output_path, **kwargs)
         logger.info("Done with videos.")
@@ -130,9 +130,9 @@ def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_heig
     start_live_censor(device_id, use_vcam, vcam_width, vcam_height, vcam_fps, censor_config)
 
 
-def serve_http(host, port, ssl_file, ssl_key, debug):
+def serve_http(host, port, ssl_file, ssl_key, use_ssl, debug):
     from server import http_server
-    http_server.start_server(host=host, port=port, use_https=True, cert_file=ssl_file, key_file=ssl_key, debug=debug)
+    http_server.start_server(host=host, port=port, use_https=use_ssl, cert_file=ssl_file, key_file=ssl_key, debug=debug)
 
 
 def get_mode_overview():
@@ -174,6 +174,7 @@ def main():
 
     # server arguments
     server_parser = parser.add_argument_group(title='Server arguments')
+    server_parser.add_argument('--ssl', action='store_true', help='Whether to enable https.')
     server_parser.add_argument('--port', default=8443, type=int, help='Port to run the server on.')
     server_parser.add_argument('--host', default='localhost', type=str, help='Host to run the server on.')
     server_parser.add_argument('--ssl-cert', default='cert.pem', type=str, help='Path to certificate file.')
@@ -243,7 +244,7 @@ def main():
         )
 
     elif args.mode in ['http', 'https']:
-        serve_http(args.host, args.port, args.ssl_cert, args.ssl_key, args.debug)
+        serve_http(args.host, args.port, args.ssl_cert, args.ssl_key, args.ssl, args.debug)
 
     else:
         raise ValueError(f'Unknown mode: {args.mode}')
