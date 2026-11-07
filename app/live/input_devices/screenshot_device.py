@@ -10,8 +10,12 @@ from ...config import CONFIG
 
 class ScreenshotDevice(InputDevice):
 
+    # maximum number of grabs per frame when looking for two that agree (see get_frame)
+    MAX_GRABS = 3
+
     def __init__(self):
         self.device = mss.mss()
+        self._prev_grab: np.ndarray | None = None
         self.area: dict[str, int] | None = None
         self._rejected_area: dict[str, int] | None = None
         self._update_area()
@@ -49,10 +53,32 @@ class ScreenshotDevice(InputDevice):
         self.area = area
         self._rejected_area = None
 
+    def _grab(self) -> np.ndarray:
+        return np.array(self.device.grab(self.area), dtype=np.uint8)  # BGRA
+
     def get_frame(self) -> tuple[float, np.ndarray]:
+        """
+        Capture the screen region.
+
+        Sometimes a grab can land mid-repaint (happened on X11 w a compositor), so the frame contains a band of
+        half-drawn screen (e.g. desktop background over a window). Such a torn grab is never
+        repeated by the next grab, so a frame is only accepted when it equals the previous
+        frame (static screen, no extra cost) or when two consecutive grabs agree.
+        When the screen keeps changing (e.g. a video) the last grab is used after MAX_GRABS.
+
+        This approach majorly reduces the number of bands, with almost no performance penalty.
+        """
         self._update_area()
-        screenshot = np.array(self.device.grab(self.area), dtype=np.uint8)  # BGRA
-        return time.monotonic(), screenshot[:, :, :3].copy()
+        frame = self._grab()
+        for _ in range(self.MAX_GRABS - 1):
+            if np.array_equal(frame, self._prev_grab):
+                break
+            confirm = self._grab()
+            if np.array_equal(frame, confirm):
+                break
+            frame = confirm
+        self._prev_grab = frame
+        return time.monotonic(), frame[:, :, :3].copy()
 
     def screen_region(self) -> tuple[int, int, int, int]:
         return self.area["left"], self.area["top"], self.area["width"], self.area["height"]
