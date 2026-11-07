@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import shutil
 import ssl
 import time
 import traceback
@@ -182,7 +183,7 @@ async def censor_frame(request):
                     update_fps()
                     continue
 
-                job, future = submit_censoring_job(image_bytes, EXTENSION, None, None)
+                job, future = submit_censoring_job(image_bytes, None, None)
                 futures.append(future)
                 jobs[job.job_id] = job
                 headers[job.job_id] = header_bytes
@@ -221,27 +222,31 @@ async def detect_features(request):
         output_path = None
         if exp_response == 'url':
             output_path = CENSORED_PATH / image_path.name
-        _, future = submit_detection_job(image_bytes, image_path.suffix, output_path, censor_config)
-        result: cc.Job = future.result()
+        _, future = submit_detection_job(image_bytes, output_path, censor_config)
+        result: cc.Job = future.wait()
 
-        # Create JSON response with detected features
-        response_data = {
-            'status': 'success',
-            'file_name': image_path.name,
-            'features': []
-        }
+        if not result.success:
+            logger.warning(f"Error detecting features: {str(result.error)}")
+            return web.json_response({'error': str(result.error)}, status=500)
 
-        raw_boxes = result.result.features[0]
-
-        for box in raw_boxes:
-            response_data['features'].append({
-                'class': int(box.class_id),
-                'label': box.label,
-                'confidence': float(box.score),
-                'bbox': [float(b) for b in box.polygon.bounds]
+        detections = []
+        for d in result.result["detections"]:
+            detections.append({
+                'id': int(d['id']),
+                'label': d['label'],
+                'score': float(d['score']),
+                'box': [float(v) for v in d['box']],  # x, y, w, h
+                'polygons': [[[float(x), float(y)] for x, y in poly] for poly in d['polygons']],
+                'model': d['model'],
+                'parent': d['parent'],
             })
 
-        return web.json_response(response_data)
+        return web.json_response({
+            'status': 'success',
+            'file_name': image_path.name,
+            'detections': detections,
+            'cached_models': list(result.result.get('cached_models', [])),
+        })
 
     except Exception as e:
         logger.error(f"Error detecting features: {e}")
@@ -256,7 +261,7 @@ async def reset_cache(request):
                 if item.is_file():
                     item.unlink()
                 elif item.is_dir():
-                    item.rmdir()
+                    shutil.rmtree(item)
 
         return web.json_response({'status': 'success'})
 

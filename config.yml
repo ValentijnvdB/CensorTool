@@ -1,31 +1,26 @@
 ###################################################################
-#### If you have an Nvidia GPU you can turn on GPU acceleration.
-### Make sure you have read the instruction in the readme.
-gpu_enabled: false
+#### Models, GPU acceleration and detection thresholds are set in the
+#### pipeline config (./pipeline.yml, or pass another one with --pipeline).
+#### To use an Nvidia GPU, set 'device: cuda' (or cuda:N) there.
 
 ###################################################################
-#### Image sizes. The images are resized to reduce processing time.
-#### The values in picture_sizes determine to what size.
-#### Multiple values means each image is run multiple times, the runs are then combined.
-#### Different values may be best for different photos.
-####
-#### [ 1280 ]: recommended, good performance and speed tradeoff
-#### [ 640 ]:  much faster, decent performance when models fills the frame
-#### [ 2560 ]: slower, better for collage or big group photos.
-####
-#### [ 1280, 2560 ]: combine the two, may be safer than either alone
-####
-#### [ 0 ]: not recommended, uses photos as-is to neural net.
-picture_sizes: [1280]
+#### Image size. The images are resized to reduce processing time.
+#### The value determines what size the longest edge is after resizing.
+#### Must be a multiple of 32.
+#### 640: the nudenet default.
+#### 1280: works well
+#### 2560: for large images and group photos
+#### 0: for original resolution
+picture_size: 640
 
 ##################################################################
 #### Video censor does not run the model on every single frame of a
-#### video.  Instead, it runs a few times per second, and then
+#### video.  Instead, it runs a few frames per second, and then
 #### uses those to censor the whole video.  Set how many times
 #### per second the model runs here. More means better accuracy,
-#### but slower. 5 is a good sweet spot.  You can drop to 3 if 5
-#### is too slow, but you should probably increase the time_safety values
-#### in the censoring box_config if you do. 15 is a good balance.
+#### but slower. Play with different values and see what works
+#### for you.
+#### 0 -> all frames are run through the model
 video_censor_fps: 15
 
 ##################################################################
@@ -47,10 +42,12 @@ live_cursor_color: [168, 93, 253]
 
 # Config for the 'ai_remove' censor style.
 # Comfy base url
-comfy_base_url: "http://localhost:8188/"
+comfy_host: "localhost"
+comfy_port: 8188
 
 # Comfy-ui Workflow. (Not provided with the tool, so make sure you add one yourself)
 comfy_workflow: "./data/assets/workflow.json"
+
 
 ################################################
 # Input Delete Probability
@@ -75,10 +72,6 @@ input_delete_probability: 0
 ########################################################################
 ############################### ADVANCED ###############################
 ########################################################################
-# What model should the detection of all_polygons be done. Slower models are more accurate.
-# Options: 'fastest', 'faster', 'fast', 'medium-fast', 'medium', 'medium-slow', 'slow', 'slower', 'slowest'
-body_detection_model: 'fastest'
-
 # The number of workers in the threadpool
 n_workers: 4
 
@@ -87,10 +80,6 @@ n_workers: 4
 # Keep >=n_workers, otherwise the workers have idle time
 # Set to 0 for unlimited jobs.
 max_concurrent_jobs: 128
-
-# If you have more than one graphics card, and you care which one
-# runs the model change this. You probably don't need to change this
-cuda_device_id: 0
 
 # This determines how various censor styles deal with overlap
 # You probably don't need to change this
@@ -106,12 +95,4 @@ censor_scale_strategy: 'feature'  # scales N->1 by min feature dimension, with a
 # censor_scale_strategy: 'image' # scales N->1 by max image dimension, with 1000 base (so a 2000x1200 image would be 2N->1)
 # censor_scale_strategy: 'none' # uses N -> 1 reduction
 
-# this determines how much delay is present in live censor
-# only relevant if you use 'precise' mode.
-# you may need to adjust this for performance reasons
-live_delay: 0.2  # seconds
-
-# should live censor use image interpolation?
-# setting this to true may make videos in live censor smoother, but can cause ghosting.
-live_interpolate_frames: false
 

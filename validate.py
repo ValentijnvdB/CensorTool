@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 from loguru import logger
 
@@ -6,7 +8,7 @@ import constants
 
 def validate_install():
 
-    to_test = ['config', 'onnxruntime', 'onnxruntime_gpu', 'vcam', 'screenshot']
+    to_test = ['config', 'pipeline', 'pipeline_gpu', 'vcam', 'screenshot']
 
     validated: dict[str, bool] = {}
     for item in to_test:
@@ -20,20 +22,20 @@ def validate_install():
         logger.info(f"Config loaded.")
         validated['config'] = True
 
-    ########################## ONNXRUNTIME ##########################
-    success, msg = validate_onnxruntime(False)
+    ########################## PIPELINE ##########################
+    success, msg = validate_pipeline(CONFIG.pipeline_path, 'cpu')
     if success:
-        logger.info(f"Onnxruntime CPU validated successfully.")
+        logger.info(f"Pipeline ({CONFIG.pipeline_path}) on CPU validated successfully: {msg}")
     else:
-        logger.error(f"Onnxruntime CPU failed: {msg}")
-    validated['onnxruntime'] = success
+        logger.error(f"Pipeline ({CONFIG.pipeline_path}) on CPU failed: {msg}")
+    validated['pipeline'] = success
 
-    success, msg = validate_onnxruntime(True)
+    success, msg = validate_pipeline(CONFIG.pipeline_path, 'cuda')
     if success:
-        logger.info(f"Onnxruntime GPU validated successfully.")
+        logger.info(f"Pipeline ({CONFIG.pipeline_path}) on GPU validated successfully: {msg}")
     else:
-        logger.error(f"Onnxruntime GPU failed: {msg}")
-    validated['onnxruntime_gpu'] = success
+        logger.error(f"Pipeline ({CONFIG.pipeline_path}) on GPU failed: {msg}")
+    validated['pipeline_gpu'] = success
 
     ########################## VCAM ##########################
     success, msg = validate_vcam()
@@ -56,8 +58,8 @@ def validate_install():
     works_str = 'should work'
     not_working_str = 'NOT WORKING (check logs above)'
 
-    onnx = validated['onnxruntime'] or validated['onnxruntime_gpu']
-    onnx_str = f"(CPU {'and GPU' if validated['onnxruntime_gpu'] else 'only'})"
+    onnx = validated['pipeline'] or validated['pipeline_gpu']
+    onnx_str = f"(CPU {'and GPU' if validated['pipeline_gpu'] else 'only'})"
 
     image_censor = onnx
     image_str = f"{works_str} {onnx_str}." if image_censor else not_working_str
@@ -82,36 +84,45 @@ def validate_install():
     logger.info("===========================================================")
 
 
-def validate_onnxruntime(gpu: bool) -> tuple[bool, str]:
-    """Start an onnxruntime session with CPU or GPU and run on a small image."""
+def validate_pipeline(pipeline_path: Path, device: str) -> tuple[bool, str]:
+    """
+    Load every model in the pipeline config on the given device (ignoring the devices set in the file)
+    and run a detection-only job on a small image.
+    """
     try:
-        import onnxruntime
+        import yaml
+        import censor_core as cc
 
-        if gpu:
-            providers = [('CUDAExecutionProvider', {'device_id': 0})]
-        else:
-            providers = [('CPUExecutionProvider', {})]
+        pipeline_path = Path(pipeline_path)
+        if not pipeline_path.exists():
+            return False, f"Pipeline config not found at '{pipeline_path}'."
 
-        sess_options = onnxruntime.SessionOptions()
-        sess_options.log_severity_level = 3
+        with open(pipeline_path, 'r') as f:
+            spec = yaml.safe_load(f)
 
-        model_path = constants.model_root / 'detector_v2_default_checkpoint.onnx'
-        if not model_path.exists():
-            return False, f'Nudenet model not found at {model_path}. Make sure you have downloaded it first.'
+        def resolve(entry: dict) -> dict:
+            entry = dict(entry)
+            entry.pop('device', None)
+            model_path = Path(entry['path'])
+            if not model_path.is_absolute():
+                model_path = pipeline_path.parent / model_path
+            if not model_path.exists():
+                raise FileNotFoundError(f"Model '{entry.get('name', model_path.name)}' not found at '{model_path}'.")
+            entry['path'] = str(model_path)
+            return entry
 
-        session = onnxruntime.InferenceSession(
-            path_or_bytes=model_path,
-            sess_options=sess_options,
-            providers=providers)
+        models = [resolve(m) for m in spec.get('models', [])]
+        landmarks = resolve(spec['landmarks']) if spec.get('landmarks') else None
 
-        image = np.zeros((120, 120, 3), dtype=np.uint8)
+        image = np.zeros((128, 128, 3), dtype=np.uint8)
+        with cc.ImagePipeline(models=models, landmarks=landmarks, device=device, max_workers=1) as pipeline:
+            job = pipeline.submit(cc.Job(image=image, use_cache=False)).wait()
+            stages = pipeline.models
 
-        if session is None:
-            return False, 'session is None'
+        if not job.success:
+            return False, str(job.error)
 
-        session.run(constants.model_outputs, {constants.model_input: [image]})
-
-        return True, 'success'
+        return True, f"models: {stages}"
 
     except Exception as e:
         return False, str(e)

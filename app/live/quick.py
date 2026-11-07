@@ -13,7 +13,7 @@ import censor_core as cc
 
 from input_devices.generic import InputDevice
 from output_devices.generic import OutputDevice
-from ..config import CONFIG, read_censor_config_from_file_w_hash
+from ..config import CONFIG, read_censor_config_from_file_w_hash, make_image_pipeline
 
 
 def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device: OutputDevice, censor_config_path: Path = None):
@@ -32,7 +32,7 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
     if not was_read:
         raise RuntimeError("Failed to read censor config from file.")
 
-    with cc.ImagePipeline(max_workers=CONFIG.n_workers) as pipeline:
+    with make_image_pipeline() as pipeline:
         futures: list[cc.JobHandle] = []
         cancel_events: dict[float, Event] = {}
         def add_image(image: np.ndarray, ts: float) -> None:

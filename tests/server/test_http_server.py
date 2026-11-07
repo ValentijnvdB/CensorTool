@@ -45,18 +45,28 @@ def failed_job():
     return job
 
 
+def make_detection(id=0, label="FACE_FEMALE", score=0.92, box=(10, 20, 100, 100),
+                   polygons=(), model="nudenet", parent=None) -> dict:
+    """A detection dict as censor_core 2.0 returns it in result["detections"]."""
+    return {"id": id, "label": label, "score": score, "box": box,
+            "polygons": list(polygons), "model": model, "parent": parent}
+
+
+def make_detection_submit(detections: list[dict], cached_models=()):
+    """Return value of submit_detection_job: (job, handle), where handle.wait() returns the finished job."""
+    job = MagicMock()
+    job.success = True
+    job.result = {"image": None, "output_path": None,
+                  "detections": detections, "cached_models": list(cached_models)}
+    handle = MagicMock()
+    handle.wait.return_value = job
+    return job, handle
+
+
 @pytest.fixture()
 def detection_job():
-    """A job suitable for detect_features, with one mock bounding box."""
-    box = MagicMock()
-    box.class_id = 1
-    box.label = "face"
-    box.score = 0.92
-    box.polygon.bounds = (10.0, 20.0, 110.0, 120.0)
-
-    job = MagicMock()
-    job.result.features = [[box]]
-    return job
+    """A detect_features submission with one detection."""
+    return make_detection_submit([make_detection()])
 
 
 @pytest.fixture()
@@ -213,7 +223,7 @@ class TestDetectFeatures:
         assert body["file_name"] == "face.jpg"
 
     @pytest.mark.asyncio
-    async def test_returns_correct_feature_fields(self, fake_request, detection_job, image_path):
+    async def test_returns_correct_detection_fields(self, fake_request, detection_job, image_path):
         from server.http_server import detect_features
 
         with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
@@ -221,15 +231,18 @@ class TestDetectFeatures:
                 result = await detect_features(fake_request)
 
         body = json.loads(result.body)
-        assert len(body["features"]) == 1
-        feature = body["features"][0]
-        assert feature["class"] == 1
-        assert feature["label"] == "face"
-        assert feature["confidence"] == pytest.approx(0.92)
-        assert feature["bbox"] == [10.0, 20.0, 110.0, 120.0]
+        assert len(body["detections"]) == 1
+        d = body["detections"][0]
+        assert d["id"] == 0
+        assert d["label"] == "FACE_FEMALE"
+        assert d["score"] == pytest.approx(0.92)
+        assert d["box"] == [10.0, 20.0, 100.0, 100.0]
+        assert d["polygons"] == []
+        assert d["model"] == "nudenet"
+        assert d["parent"] is None
 
     @pytest.mark.asyncio
-    async def test_all_bbox_values_are_floats(self, fake_request, detection_job, image_path):
+    async def test_box_values_are_floats(self, fake_request, detection_job, image_path):
         from server.http_server import detect_features
 
         with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
@@ -237,57 +250,67 @@ class TestDetectFeatures:
                 result = await detect_features(fake_request)
 
         body = json.loads(result.body)
-        for val in body["features"][0]["bbox"]:
+        for val in body["detections"][0]["box"]:
             assert isinstance(val, float)
 
     @pytest.mark.asyncio
-    async def test_class_id_is_int(self, fake_request, detection_job, image_path):
+    async def test_polygons_and_parent_are_serialized(self, fake_request, image_path):
         from server.http_server import detect_features
 
+        import numpy as np
+        eye = make_detection(id=1, label="EYES_FEMALE", model="landmarks", parent=0,
+                             polygons=[np.array([[1, 2], [3, 4], [5, 6]], dtype=np.int32)])
+        submit = make_detection_submit([make_detection(), eye], cached_models=["nudenet"])
+
         with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_detection_job", return_value=detection_job):
+            with patch("server.http_server.submit_detection_job", return_value=submit):
                 result = await detect_features(fake_request)
 
         body = json.loads(result.body)
-        assert isinstance(body["features"][0]["class"], int)
+        assert body["detections"][1]["polygons"] == [[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]]
+        assert body["detections"][1]["parent"] == 0
+        assert body["cached_models"] == ["nudenet"]
 
     @pytest.mark.asyncio
-    async def test_returns_empty_features_list_when_no_boxes(self, fake_request, image_path):
+    async def test_returns_empty_detections_list_when_nothing_found(self, fake_request, image_path):
         from server.http_server import detect_features
 
-        empty_job = MagicMock()
-        empty_job.result.features = [[]]
-
         with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_detection_job", return_value=empty_job):
+            with patch("server.http_server.submit_detection_job", return_value=make_detection_submit([])):
                 result = await detect_features(fake_request)
 
         body = json.loads(result.body)
-        assert body["features"] == []
+        assert body["detections"] == []
 
     @pytest.mark.asyncio
-    async def test_returns_multiple_boxes(self, fake_request, image_path):
+    async def test_returns_multiple_detections_in_order(self, fake_request, image_path):
         from server.http_server import detect_features
 
-        def make_box(class_id, label, score):
-            b = MagicMock()
-            b.class_id = class_id
-            b.label = label
-            b.score = score
-            b.polygon.bounds = (0.0, 0.0, 1.0, 1.0)
-            return b
-
-        multi_job = MagicMock()
-        multi_job.result.features = [[make_box(0, "person", 0.9), make_box(1, "face", 0.8)]]
+        submit = make_detection_submit([
+            make_detection(id=0, label="BODY", model="people"),
+            make_detection(id=1, label="FACE_FEMALE"),
+        ])
 
         with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_detection_job", return_value=multi_job):
+            with patch("server.http_server.submit_detection_job", return_value=submit):
                 result = await detect_features(fake_request)
 
         body = json.loads(result.body)
-        assert len(body["features"]) == 2
-        assert body["features"][0]["label"] == "person"
-        assert body["features"][1]["label"] == "face"
+        assert [d["label"] for d in body["detections"]] == ["BODY", "FACE_FEMALE"]
+
+    @pytest.mark.asyncio
+    async def test_returns_500_when_job_failed(self, fake_request, image_path):
+        from server.http_server import detect_features
+
+        job, handle = make_detection_submit([])
+        job.success = False
+        job.error = "pipeline exploded"
+
+        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
+            with patch("server.http_server.submit_detection_job", return_value=(job, handle)):
+                result = await detect_features(fake_request)
+
+        assert result.status == 500
 
     @pytest.mark.asyncio
     async def test_returns_500_on_read_request_exception(self, fake_request):

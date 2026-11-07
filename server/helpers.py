@@ -7,25 +7,31 @@ import constants
 
 import censor_core as cc
 
+from app.config import make_image_pipeline, read_censor_config_from_file
 from . import utils, server_config
 
-# TODO: use config for vars
-
-# censoring pipeline
-_image_pipeline = cc.ImagePipeline(max_workers=8)
-_video_pipeline: cc.VideoPipeline = None
+# censoring pipelines, created by start_pipeline()
+_image_pipeline: cc.ImagePipeline | None = None
+_video_pipeline: cc.VideoPipeline | None = None
 _debug = False
+
+# Censor config used when a request does not provide one.
+# censor_core 2.0 treats a job without a config as detection-only (nothing is censored).
+_default_censor_config: dict | None = None
 
 
 def start_pipeline(debug: bool):
-    global _debug, _video_pipeline
+    global _debug, _image_pipeline, _video_pipeline, _default_censor_config
+    _default_censor_config = read_censor_config_from_file()
+    _image_pipeline = make_image_pipeline(mode='s')
     _image_pipeline.start()
     _video_pipeline = cc.VideoPipeline(_image_pipeline)
     _debug = debug
 
 
 def stop_pipeline():
-    _image_pipeline.stop()
+    if _image_pipeline is not None:
+        _image_pipeline.stop()
 
 
 async def submit_video_job(video_path: Path, output_path: Path, early_exit: bool, censor_config: dict | None) -> cc.VideoJob:
@@ -40,10 +46,9 @@ async def submit_video_job(video_path: Path, output_path: Path, early_exit: bool
         early_exit=early_exit,
         override_cache=False,
         use_cache=True,
-        cache_base_dir=server_config.CACHE_DIR
+        cache_base_dir=str(server_config.CACHE_DIR),
+        config=censor_config if censor_config is not None else _default_censor_config,
     )
-    if censor_config is not None:
-        job.config = censor_config
 
     return _video_pipeline.submit(job)
 
@@ -71,6 +76,11 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
         output_path: Path = constants.data_root / 'server' / 'debug' / (job_id + '.png')
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Without a config censor_core runs every model and censors nothing: fine for detection,
+    # but censoring jobs fall back to the default censor config.
+    if censor_config is None and not early_exit:
+        censor_config = _default_censor_config
+
     job = cc.Job(
         job_id=job_id,
         image=image,
@@ -79,10 +89,9 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
         early_exit=early_exit,
         override_cache=False,
         use_cache=True,
-        cache_base_dir=server_config.CACHE_DIR
+        cache_base_dir=str(server_config.CACHE_DIR),
+        config=censor_config,
     )
-    if censor_config is not None:
-        job.config = censor_config
 
     return job, _image_pipeline.submit(job)
 

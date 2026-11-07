@@ -34,12 +34,12 @@ def censor_videos(
     # load config
     censor_config: dict = read_censor_config_from_file(censor_config)
 
-    with cc.VideoPipeline(max_workers=4) as pl:
+    with make_video_pipeline() as pl:
         for video_path in tqdm(video_paths):
-            output_path = None
-            if output_dir is not None:
-                output_path = str(output_dir / video_path.name)
-                avi_path = str(output_dir / (video_path.stem + '.avi'))
+            if output_dir is None:
+                output_dir = video_path.parent
+            output_path = str(output_dir / video_path.name)
+            avi_path = str(output_dir / (video_path.stem + '.avi'))
 
             vid_job = cc.VideoJob(
                 job_id=video_path.stem,

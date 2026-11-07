@@ -26,6 +26,7 @@ You will need two programs for the easiest installation:
 2. Your favorite program to create virtual environments. I prefer [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install#windows-installation), so that is what will be used in this guide.
 
 For GPU support you'll need a Nvidia GPU and have [CUDA](https://developer.nvidia.com/cuda-downloads) installed.
+Then set `device: cuda` in `pipeline.yml`.
 
 ### Installation:
 1. Open a terminal or command prompt in the location you want to store the program.
@@ -51,7 +52,12 @@ For GPU support you'll need a Nvidia GPU and have [CUDA](https://developer.nvidi
     ```
     python main.py init
     ```
-6. Download NudeNet from https://github.com/notAI-tech/NudeNet/releases/tag/v0. Download ```detector_v2_default_checkpoint.onnx``` and place it in the ```./models/``` folder.
+6. Download the models and place them in the ```./models/``` folder:
+    - NudeNet ```640m.onnx``` from https://github.com/notAI-tech/NudeNet/releases (as ```./models/640m.onnx```)
+    - a YOLO segmentation model for body outlines, e.g. ```yolo26n-seg.onnx``` (as ```./models/yolo/yolo26n-seg.onnx```)
+    - the PFLD landmark model for eye bars (as ```./models/pfld.onnx```)
+
+   The models are listed in ```pipeline.yml```, see [Pipeline config](#pipeline-config).
 7. Run the validate process. This will run a few tests to see what features work.
     ```
     python main.py validate
@@ -93,6 +99,7 @@ python main.py <mode> <args>
 |                   | `-o, --output`         | Path     | Path to output directory.                                                           | `./censored/`                            |
 | **Configuration** | `--config`             | Path     | Path to the main config file.                                                       | `./config.yml`                           |
 |                   | `-cc, --censor-config` | Path     | Path to the censor config file.                                                     | `./default_censor_config.yml`            |
+|                   | `-pl, --pipeline`      | Path     | Path to the pipeline config file (which models are loaded).                         | `./pipeline.yml`                         |
 | **Live & Webcam** | `--live-mode`          | str      | Live mode: quick or precise. Quick is recommend.                                    | `quick`                                  |
 |                   | `--device`             | int      | Input device to use. -1 means screenshots, >=0 needs to be a valid video device id. | `-1` on Live mode and `0` on Webcam mode |
 |                   | `--vcam`               | bool     | Whether to output to a virtual camera.                                              | `False`                                  |
@@ -107,3 +114,31 @@ python main.py <mode> <args>
 |                   | `--host`               | str      | Host to run the server on.                                                          | `localhost`                              |
 |                   | `--ssl-cert`           | Path     | Path to certificate file.                                                           | `cert.pem`                               |
 |                   | `--ssl-key`            | Path     | Path to key file.                                                                   | `key.pem`                                |
+
+
+## Configuration
+
+Censor Tool uses three config files:
+
+| **File**                        | **Contents**                                                                    |
+|---------------------------------|---------------------------------------------------------------------------------|
+| `config.yml`                    | General settings: image size, video fps, live capture region, workers, etc.    |
+| `pipeline.yml`                  | Which models are loaded, on which device, and their detection thresholds.       |
+| `default_censor_config.yml`     | What is censored and how. Can be swapped per run without reloading the models. |
+
+### Pipeline config
+
+`pipeline.yml` lists the (YOLO) models that are run. Relative paths are relative to the file itself.
+
+- `device`: `cpu`, `cuda` or `cuda:N`. Set it at the top for all models, or per model.
+- `min_confidence`: score floor per model. Detections below it are dropped before anything else,
+  so keep it at or below the lowest `min_probability` in your censor configs.
+- `labels`: renames labels. The segmentation model's `person` is renamed to `BODY`.
+
+### Censor config
+
+`features_to_censor` lists the labels to censor. These are the labels the models in `pipeline.yml` produce:
+the NudeNet labels (`FACE_FEMALE`, `FEMALE_BREAST_EXPOSED`, ...), `BODY` (the full body outline) and
+`EYES_FEMALE`/`EYES_MALE` (eye bars). Unknown labels and misspelled keys are reported as warnings at startup.
+
+Use `clip_to: [BODY]` on a feature to clip its censor area to the body outline.

@@ -61,11 +61,3 @@ bv_detect_timestamp2_name = 'bv_detects_timestamp2_name'
 bv_detect_shm_0_name = "bv_detect_shm_0_name"
 bv_detect_shm_1_name = "bv_detect_shm_1_name"
 bv_detect_shm_2_name = "bv_detect_shm_2_name"
-
-model_outputs = [
-        'filtered_detections/map/TensorArrayStack/TensorArrayGatherV3:0',    # boxes
-        'filtered_detections/map/TensorArrayStack_1/TensorArrayGatherV3:0',  # scores
-        'filtered_detections/map/TensorArrayStack_2/TensorArrayGatherV3:0',  # classes
-]
-
-model_input = 'input_1:0'

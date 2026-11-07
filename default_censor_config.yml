@@ -1,28 +1,28 @@
 ### Features to censor
 ### Put a '#' in front of a line to turn it off.
 features_to_censor: [
-    'exposed_anus',
-    'exposed_vulva',
-    'exposed_breast',
-    'exposed_buttocks',
-#    'covered_vulva',
-#    'covered_breast',
-#    'covered_buttocks',
-    'face_masc',
-    'face_femme',
-#    'exposed_belly',
-#    'covered_belly',
-#    'exposed_feet',
-#    'covered_feet',
-#    'exposed_armpits',
-    'exposed_penis',
-#    'exposed_chest',
-#    'eyes_femme',
-    # 'eyes_masc',
+    "ANUS_EXPOSED",
+    "FEMALE_GENITALIA_EXPOSED",
+    "FEMALE_BREAST_EXPOSED",
+    "BUTTOCKS_EXPOSED",
+    "MALE_GENITALIA_EXPOSED",
+    "FACE_FEMALE",
+    "FACE_MALE",
+#    "FEMALE_GENITALIA_COVERED",
+#    "FEMALE_BREAST_COVERED",
+#    "BUTTOCKS_COVERED",
+#    "ANUS_COVERED",
+#    "BELLY_EXPOSED",
+#    "BELLY_COVERED",
+#    "FEET_EXPOSED",
+#    "FEET_COVERED",
+#    "ARMPITS_EXPOSED",
+#    "ARMPITS_COVERED",
+#    "MALE_BREAST_EXPOSED",
+#    "EYES_FEMALE",
+#    "EYES_MALE",
+#    "BODY",      # the full body outline (from the segmentation model in pipeline.yml)
 ]
-
-# Merge overlapping censor boxes. Recommended to leave this 'true'.
-merge_overlapping_censor_boxes: true
 
 # Merge overlapping borders into one. If the borders have different colors and thickness one is chosen randomly.
 merge_overlapping_borders: true
@@ -34,7 +34,7 @@ force_inverse_censor: false
 enable_overlays: false
 
 # Enable a small watermark
-enable_watermark: False
+enable_watermark: false
 
 ##############################################################################################################
 ################################################ CENSOR BOXES ################################################
@@ -115,7 +115,7 @@ enable_watermark: False
 # If inverse censor is used, the censor_type of the features with inverse is overridden by the censor_box below.
 inverse_censor_style:
     type: blur
-    blur_strength: 51
+    strength: 51
 
 ################################ DEFAULT CENSOR BOX ################################
 # All features will be as censored according to default_censor_config unless an override is provided below.
@@ -146,26 +146,36 @@ default_censor_config:
     # The minimum confidence that the datatypes needs to have that it detected a certain feature before it is censored
     # Lower values causes pieces of the image to be censored when there is nothing that needs censoring.
     # Higher values causes some features that need to be censored to not be censored.
-    min_prob: 0.45
+    min_probability: 0.45
 
-    # the shape of the censor area: ellipse, circle, rectangle, default
+    # the shape of the censor area: default, mask, ellipse, circle, rectangle
+    # default: the detection's own shape (the outline for BODY and eyes, the box otherwise)
+    # mask: the segmentation outline (only for labels from segmentation models, e.g. BODY)
     shape: default
 
-    # Whether the found censor box (which are rectangles by default) should be intersected with the shape of the human.
+    # Clip the censor area to the outline of one or more segmentation labels.
+    # E.g. clip_to: [BODY] intersects the censor box with the shape of the human.
     # This can create nicer censors, but only works sometimes as the faster models are not very accurate.
-    intersect_human: false
+    # clip_to: [BODY]
 
 
 ################################ OVERRIDES ################################
 # Feature Overrides: to override any of the above defaults for a specific feature.
 # If some setting is missing in the override, the default value is used.
 feature_overrides:
-    face_femme:
+    FACE_FEMALE:
         censor_style:
             type: pixel
             factor: 20
 
-    face_masc:
+    FACE_MALE:
         censor_style:
             type: pixel
             factor: 20
+
+    BODY:
+        # Minimum confidence for a body shape, also when BODY is only used as a clip_to target.
+        min_probability: 0.5
+        censor_style:
+            type: pixel
+            factor: 30

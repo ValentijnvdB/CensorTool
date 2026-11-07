@@ -45,26 +45,8 @@ class Config:
     comfy_port: int                         = 8188
     comfy_workflow: str|Path                =  "./data/assets/workflow.json"
 
-
-@dataclass
-class CoreConfig:
-    """
-    Contains all settings that will be passed to the censor core system at initialization.
-    """
-    nudenet_gpu_enabled: bool       = False
-    nn_cuda_device_id: int          = 0
-
-    hd_gpu_enabled: bool            = False
-    hd_cuda_device_id: int          = 0
-
-    ed_gpu_enabled: bool            = False
-    ed_cuda_device_id: int          = 0
-
-    debug: bool                     = False
-
-    body_detection_model: str       = './models/yolo/yolo11n-seg.pt'
-    nudenet_min_confidence: float   = 0.0
-    hd_min_confidence: float        = 0.0
+    # pipeline.yml listing the models censor_core loads (paths in it are relative to the file)
+    pipeline_path: Path                     = Path('./pipeline.yml')
 
 
 def read_censor_config_from_file(path: Path | str | None = None) -> dict[str, Any]:
@@ -98,8 +80,8 @@ def read_censor_config_from_file(path: Path | str | None = None) -> dict[str, An
             default_config['feature_overrides'] = {}
 
         for feature, censor_box in default_config['feature_overrides'].items():
-            style = censor_box['censor_style']
-            if style['type'] == 'ai_remove':
+            style = (censor_box or {}).get('censor_style')
+            if style is not None and style.get('type') == 'ai_remove':
                 if 'comfy_host' not in style:
                     style['comfy_host'] = CONFIG.comfy_host
                 if 'comfy_port' not in style:
@@ -132,7 +114,7 @@ def read_censor_config_from_file_w_hash(path: Path = None, prev_hash: str = None
         return False, None, hash_path
 
 
-def load_config(path: Path | str = None, debug: bool = False) -> Config:
+def load_config(path: Path | str = None, pipeline_path: Path | str | None = None, debug: bool = False) -> Config:
     if path is None:
         path = './config.yml'
 
@@ -160,43 +142,24 @@ def load_config(path: Path | str = None, debug: bool = False) -> Config:
         comfy_port=config_dict['comfy_port'],
         comfy_workflow=config_dict['comfy_workflow'],
         n_workers=config_dict['n_workers'],
-        max_concurrent_jobs=config_dict['max_concurrent_jobs']
+        max_concurrent_jobs=config_dict['max_concurrent_jobs'],
+        pipeline_path=Path(pipeline_path) if pipeline_path is not None else Path('./pipeline.yml'),
     )
 
 
-def read_general_config(path_to_config: Path | str) -> dict[str, Any]:
-    with open(path_to_config, 'r') as file:
-        form_config = yaml.safe_load(file)
-
-    if "gpu_enabled" not in form_config or not form_config['gpu_enabled']:
-        # disable gpu acceleration
-        form_config["nudenet_gpu_enabled"] = False
-        form_config["hd_gpu_enabled"] = False
-        form_config["ed_gpu_enabled"] = False
-
-    return form_config
+def make_image_pipeline(max_workers: int | None = None, mode: str = 's') -> cc.ImagePipeline:
+    """Create an ImagePipeline from the configured pipeline.yml."""
+    if max_workers is None:
+        max_workers = CONFIG.n_workers
+    return cc.ImagePipeline.from_yaml(str(CONFIG.pipeline_path), max_workers=max_workers, mode=mode)
 
 
-def init_app_config(path_to_config: Path|str|None, debug: bool) -> None:
-    global _app_initialized
-    if _app_initialized:
-        return
-    if path_to_config is None:
-        path_to_config: str = './config.yml'
-
-    config = read_general_config(path_to_config)
-
-    flags = cc.CoreConfig()
-    flags.nn_gpu_enabled = config['nudenet_gpu_enabled']
-    flags.hd_gpu_enabled = config['hd_gpu_enabled']
-    flags.ed_gpu_enabled = config['ed_gpu_enabled']
-    flags.hd_model = config['hd_model']
-    flags.debug = debug
-    flags.nudenet_min_confidence =config['nudenet_min_confidence']
-    flags.hd_min_confidence = config['hd_min_confidence']
-    cc.AppConfig.instance().initialize(flags)
-
-    _app_initialized = True
+def make_video_pipeline(max_workers: int | None = None) -> cc.VideoPipeline:
+    """Create a VideoPipeline (with its own ImagePipeline) from the configured pipeline.yml."""
+    if max_workers is None:
+        max_workers = CONFIG.n_workers
+    return cc.VideoPipeline.from_yaml(str(CONFIG.pipeline_path), max_workers=max_workers,
+                                      max_concurrent_jobs=CONFIG.max_concurrent_jobs)
 
 
 def censor_config_has_changed(prev_hash: str, path: Path = None) -> Config:
@@ -209,7 +172,6 @@ def censor_config_has_changed(prev_hash: str, path: Path = None) -> Config:
 
 
 # Private variables
-_app_initialized = False
 _default_censor_config_path = Path('./default_censor_config.yml')
 
 # Public variables
@@ -218,11 +180,13 @@ CONFIG: Config = Config()
 
 def init_configs(config_file: str|Path|None = None,
                  default_censor_config: str|Path|None = None,
+                 pipeline_file: str|Path|None = None,
                  debug: bool = False):
-    global CONFIG
+    global CONFIG, _default_censor_config_path
 
-    CONFIG = load_config(config_file, debug)
-    init_app_config(config_file, debug)
+    CONFIG = load_config(config_file, pipeline_file, debug)
+    if default_censor_config is not None:
+        _default_censor_config_path = Path(default_censor_config)
 
 
 

@@ -153,6 +153,8 @@ def main():
     parser.add_argument('--config', default='./config.yml', help='Path to the main config file.')
     parser.add_argument('-cc', '--censor-config',
                         default='./default_censor_config.yml', help='Path to the censor config file.')
+    parser.add_argument('-pl', '--pipeline', default='./pipeline.yml',
+                        help='Path to the pipeline config file (which models censor_core loads).')
 
     # live & webcam mode
     lw_parser = parser.add_argument_group(title='Live & Webcam arguments')
@@ -184,7 +186,8 @@ def main():
     create_dirs()
 
     # Initialize the censor app
-    init_app(config_file=args.config, default_censor_config=args.censor_config, debug=args.debug)
+    init_app(config_file=args.config, default_censor_config=args.censor_config,
+             pipeline_file=args.pipeline, debug=args.debug)
 
     # Remove the default stderr handler
     logger.remove()

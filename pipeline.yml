@@ -1,0 +1,39 @@
+# Which models censor_core loads. Pass another file with --pipeline.
+# Relative paths are relative to this file.
+#
+# NudeNet for body parts, a COCO segmentation model for people (as BODY, used
+# for full-body censoring and clip_to) and the PFLD landmark model for eye bars.
+
+# Where the models run: cpu | cuda | cuda:N (e.g. cuda:1 for the second GPU).
+# Applies to every model; a model can override it with its own 'device'.
+device: cpu
+
+models:
+  #### Main nudity detection model, runs on every image.
+  - name: nudenet
+    path: models/640m.onnx
+    resize: rect                 # letterbox | stretch | rect (rect: dynamic-input models)
+    agnostic_nms: true           # one box per region, across classes
+    nms_iou: 0.75
+    max_det: 0                   # 0 = no limit
+    # Score floor: detections below it are dropped before anything else (and never cached).
+    # Keep it at or below the lowest min_probability in your censor configs.
+    min_confidence: 0.05
+
+  #### Body segmentation, only runs when the censor config needs BODY
+  #### (BODY in features_to_censor, or a feature with clip_to: [BODY]).
+  #### Any YOLO segmentation model works; (n)ano is the fastest, (x) the most accurate.
+  - name: people
+    path: models/yolo/yolo26n-seg.onnx
+    resize: stretch
+    classes: [person]            # keep only these classes (names or ids)
+    labels: {person: BODY}       # rename; labels must be unique across models
+    min_confidence: 0.05
+
+#### Eye detection, runs on every detected face.
+landmarks:
+  path: models/pfld.onnx
+  run_on:                        # face label -> eye label
+    FACE_FEMALE: EYES_FEMALE
+    FACE_MALE: EYES_MALE
+  min_face_score: 0.05

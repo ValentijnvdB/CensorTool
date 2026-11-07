@@ -36,7 +36,7 @@ def censor_images(
     # load config
     censor_config: dict = read_censor_config_from_file(censor_config)
 
-    with cc.ImagePipeline(max_workers=CONFIG.n_workers, mode='s') as pl:
+    with make_image_pipeline(mode='s') as pl:
         def add_image(image_or_path: Path, save_path: Path|None) -> bool:
             """Drop-in callback for your external API."""
             job = cc.Job(
@@ -56,21 +56,24 @@ def censor_images(
         current_image: int = 0
         def create_jobs():
             """Create jobs until max_concurrent_jobs is reached."""
-            nonlocal current_image
+            nonlocal current_image, skipped_count
             while len(futures) < CONFIG.max_concurrent_jobs and current_image < len(image_paths):
                 image = image_paths[current_image]
                 path = output_dir / image.name
                 if skip_existing and path.exists():
+                    current_image += 1
+                    skipped_count += 1
+                    pbar.update(1)
                     continue
                 success = add_image(image, path)
                 current_image += 1
                 if not success:
                     break
 
+        pbar = tqdm(total=len(image_paths))
+
         # Create the initial jobs.
         create_jobs()
-
-        pbar = tqdm(total=len(image_paths))
         while futures:
             # Block until at least one analyzes job is done
             done = cc.wait_any(futures)
@@ -80,7 +83,7 @@ def censor_images(
             # process result
             if completed.success:
                 success_count += 1
-                # logger.info(f"features: {len(completed.result['features'])}, bodies: {len(completed.result['bodies'])}")
+                # logger.debug(f"detections: {len(completed.result['detections'])}")
             else:
                 error_count += 1
                 log_str = f"[{completed.job_id}] error: {completed.error}."
