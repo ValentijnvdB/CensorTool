@@ -90,22 +90,20 @@ def validate_pipeline(pipeline_path: Path, device: str) -> tuple[bool, str]:
     and run a detection-only job on a small image.
     """
     try:
-        import yaml
         import censor_core as cc
+        from app.config import load_pipeline_spec
 
         pipeline_path = Path(pipeline_path)
         if not pipeline_path.exists():
             return False, f"Pipeline config not found at '{pipeline_path}'."
 
-        with open(pipeline_path, 'r') as f:
-            spec = yaml.safe_load(f)
+        # model paths are resolved relative to the working directory
+        spec = load_pipeline_spec(pipeline_path)
 
         def resolve(entry: dict) -> dict:
             entry = dict(entry)
             entry.pop('device', None)
             model_path = Path(entry['path'])
-            if not model_path.is_absolute():
-                model_path = pipeline_path.parent / model_path
             if not model_path.exists():
                 raise FileNotFoundError(f"Model '{entry.get('name', model_path.name)}' not found at '{model_path}'.")
             entry['path'] = str(model_path)

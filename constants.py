@@ -30,6 +30,9 @@ trash_bin_cache_path = cache_root / 'trashbin'
 
 model_root = project_root_dir / 'models'
 
+# Each subdirectory is a profile with a pipeline.yml, censor_config.yml and optionally a config.yml
+profiles_path = project_root_dir / 'configs'
+
 
 # includes the RGB debug square color
 classes = [

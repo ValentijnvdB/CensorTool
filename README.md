@@ -26,7 +26,7 @@ You will need two programs for the easiest installation:
 2. Your favorite program to create virtual environments. I prefer [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install#windows-installation), so that is what will be used in this guide.
 
 For GPU support you'll need a Nvidia GPU and have [CUDA](https://developer.nvidia.com/cuda-downloads) installed.
-Then set `device: cuda` in `pipeline.yml`.
+Then set `device: cuda` in `configs/<profile>/pipeline.yml`.
 
 ### Installation:
 1. Open a terminal or command prompt in the location you want to store the program.
@@ -53,11 +53,11 @@ Then set `device: cuda` in `pipeline.yml`.
     python main.py init
     ```
 6. Download the models and place them in the ```./models/``` folder:
-    - NudeNet ```640m.onnx``` from https://github.com/notAI-tech/NudeNet/releases (as ```./models/640m.onnx```)
+    - NudeNet ```640m.onnx``` from https://github.com/notAI-tech/NudeNet/releases (as ```models/nudenet/640m.onnx```)
     - a YOLO segmentation model for body outlines, e.g. ```yolo26n-seg.onnx``` (as ```./models/yolo/yolo26n-seg.onnx```)
-    - the PFLD landmark model for eye bars (as ```./models/pfld.onnx```)
+    - the PFLD landmark model for eye bars (as ```models/eye_detection/pfld.onnx```)
 
-   The models are listed in ```pipeline.yml```, see [Pipeline config](#pipeline-config).
+   The models are listed in ```configs/default/pipeline.yml```, see [Pipeline config](#pipeline-config).
 7. Run the validate process. This will run a few tests to see what features work.
     ```
     python main.py validate
@@ -97,9 +97,10 @@ python main.py <mode> <args>
 | **Core**          | `mode`                 | str      | Mode to use.                                                                        | -                                        |
 |                   | `-i, --input`          | Path     | Path to input file or directory.                                                    | `./uncensored/`                          |
 |                   | `-o, --output`         | Path     | Path to output directory.                                                           | `./censored/`                            |
-| **Configuration** | `--config`             | Path     | Path to the main config file.                                                       | `./config.yml`                           |
-|                   | `-cc, --censor-config` | Path     | Path to the censor config file.                                                     | `./default_censor_config.yml`            |
-|                   | `-pl, --pipeline`      | Path     | Path to the pipeline config file (which models are loaded).                         | `./pipeline.yml`                         |
+| **Configuration** | `-p, --profile`        | str/Path | Config profile: a directory name in `./configs/`, or a path to a profile directory. | asks, or `default` if not in a terminal   |
+|                   | `--config`             | Path     | Path to the main config file. Overrides the profile's one.                          | from profile                             |
+|                   | `-cc, --censor-config` | Path     | Path to the censor config file. Overrides the profile's one.                        | from profile                             |
+|                   | `-pl, --pipeline`      | Path     | Path to the pipeline config file (which models are loaded). Overrides the profile's. | from profile                             |
 | **Live & Webcam** | `--live-mode`          | str      | Live mode: quick or precise. Quick is recommend.                                    | `quick`                                  |
 |                   | `--device`             | int      | Input device to use. -1 means screenshots, >=0 needs to be a valid video device id. | `-1` on Live mode and `0` on Webcam mode |
 |                   | `--vcam`               | bool     | Whether to output to a virtual camera.                                              | `False`                                  |
@@ -118,17 +119,36 @@ python main.py <mode> <args>
 
 ## Configuration
 
-Censor Tool uses three config files:
+Configs are grouped in profiles. Each profile is a directory in `./configs/`:
 
-| **File**                        | **Contents**                                                                    |
-|---------------------------------|---------------------------------------------------------------------------------|
-| `config.yml`                    | General settings: image size, video fps, live capture region, workers, etc.    |
-| `pipeline.yml`                  | Which models are loaded, on which device, and their detection thresholds.       |
-| `default_censor_config.yml`     | What is censored and how. Can be swapped per run without reloading the models. |
+```
+configs/
+├── default/
+│   ├── config.yml
+│   ├── censor_config.yml
+│   └── pipeline.yml
+└── <your-profile>/
+    ├── censor_config.yml
+    ├── pipeline.yml
+    └── config.yml          (optional)
+```
+
+| **File**              | **Contents**                                                                    | **Required** |
+|-----------------------|---------------------------------------------------------------------------------|--------------|
+| `config.yml`          | General settings: image size, video fps, live capture region, workers, etc.    | No, falls back to `configs/default/config.yml` |
+| `pipeline.yml`        | Which models are loaded, on which device, and their detection thresholds.       | Yes          |
+| `censor_config.yml`   | What is censored and how. Can be swapped per run without reloading the models. | Yes          |
+
+Select a profile with `--profile <name>` (or `--profile <path/to/profile/dir>`). Without it, you are asked to pick
+one from a list (arrow keys + enter, `default` on top). When Censor Tool is not run in a terminal (e.g. in Docker),
+the `default` profile is used.
+`--config`, `--censor-config` and `--pipeline` override a single file of the selected profile, e.g.
+`python main.py file --profile strict --pipeline ./my_pipeline.yml`.
 
 ### Pipeline config
 
-`pipeline.yml` lists the (YOLO) models that are run. Relative paths are relative to the file itself.
+`pipeline.yml` lists the (YOLO) models that are run. Relative model paths are relative to the working directory
+(run Censor Tool from the project root).
 
 - `device`: `cpu`, `cuda` or `cuda:N`. Set it at the top for all models, or per model.
 - `min_confidence`: score floor per model. Detections below it are dropped before anything else,

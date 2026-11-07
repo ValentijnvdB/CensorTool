@@ -1,6 +1,6 @@
 ###################################################################
 #### Models, GPU acceleration and detection thresholds are set in the
-#### pipeline config (./pipeline.yml, or pass another one with --pipeline).
+#### pipeline config (pipeline.yml in the profile, or pass another one with --pipeline).
 #### To use an Nvidia GPU, set 'device: cuda' (or cuda:N) there.
 
 ###################################################################
@@ -30,7 +30,7 @@ video_censor_fps: 15
 #### holds the uncensored content. Works best if you have two displays.
 live_cap_monitor: 0  # 0 means 'all monitors'.  You can almost certainly leave this as 0.
 live_cap_top: 0
-live_cap_left: 0
+live_cap_left: 500
 live_cap_height: 1080
 live_cap_width: 1920
 

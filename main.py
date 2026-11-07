@@ -9,6 +9,7 @@ from loguru import logger, _defaults
 
 import constants
 from app import init_app
+from app.config import ProfileError
 
 
 def format_time(total_ms: float) -> str:
@@ -135,6 +136,23 @@ def serve_http(host, port, ssl_file, ssl_key, use_ssl, debug):
     http_server.start_server(host=host, port=port, use_https=use_ssl, cert_file=ssl_file, key_file=ssl_key, debug=debug)
 
 
+def select_profile() -> str:
+    """Let the user pick a profile in the terminal. Falls back to the default profile when that is not possible."""
+    from app.config import DEFAULT_PROFILE, list_profiles
+    from utils import cli_select
+
+    profiles = list_profiles()
+    if len(profiles) == 1:
+        return profiles[0]
+    if not profiles or not cli_select.is_interactive():
+        return DEFAULT_PROFILE
+
+    try:
+        return cli_select.select("Select a profile:", profiles)
+    except KeyboardInterrupt:
+        sys.exit(130)
+
+
 def get_mode_overview():
     return (
         "'file': censor images and videos from file."
@@ -150,11 +168,15 @@ def main():
     parser.add_argument('-i', '--input', default=constants.uncensored_path, help='Path to input file or directory.')
     parser.add_argument('-o', '--output', default=constants.censored_path, help='Path to output directory.')
 
-    parser.add_argument('--config', default='./config.yml', help='Path to the main config file.')
-    parser.add_argument('-cc', '--censor-config',
-                        default='./default_censor_config.yml', help='Path to the censor config file.')
-    parser.add_argument('-pl', '--pipeline', default='./pipeline.yml',
-                        help='Path to the pipeline config file (which models censor_core loads).')
+    parser.add_argument('-p', '--profile', default=None,
+                        help="Config profile: a name of a directory in './configs/' or a path to a profile directory. "
+                             "If not given, you are asked to select one (or 'default' is used when not run in a terminal).")
+    parser.add_argument('--config', default=None, help="Path to the main config file. Overrides the profile's one.")
+    parser.add_argument('-cc', '--censor-config', default=None,
+                        help="Path to the censor config file. Overrides the profile's one.")
+    parser.add_argument('-pl', '--pipeline', default=None,
+                        help="Path to the pipeline config file (which models censor_core loads). "
+                             "Overrides the profile's one.")
 
     # live & webcam mode
     lw_parser = parser.add_argument_group(title='Live & Webcam arguments')
@@ -186,8 +208,13 @@ def main():
     create_dirs()
 
     # Initialize the censor app
-    init_app(config_file=args.config, default_censor_config=args.censor_config,
-             pipeline_file=args.pipeline, debug=args.debug)
+    profile = args.profile if args.profile is not None else select_profile()
+
+    try:
+        init_app(profile=profile, config_file=args.config, default_censor_config=args.censor_config,
+                 pipeline_file=args.pipeline, debug=args.debug)
+    except ProfileError as e:
+        parser.error(str(e))
 
     # Remove the default stderr handler
     logger.remove()
