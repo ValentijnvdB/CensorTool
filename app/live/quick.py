@@ -11,9 +11,10 @@ from loguru import logger
 
 import censor_core as cc
 
-from input_devices.generic import InputDevice
-from output_devices.generic import OutputDevice
-from ..config import CONFIG, read_censor_config_from_file_w_hash, make_image_pipeline
+from .input_devices.generic import InputDevice
+from .output_devices.generic import OutputDevice
+from ..config import (CONFIG, read_censor_config_from_file_w_hash, make_image_pipeline, config_file_hash,
+                      reload_config_if_changed)
 
 
 def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device: OutputDevice, censor_config_path: Path = None):
@@ -31,6 +32,7 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
     was_read, censor_config, prev_hash = read_censor_config_from_file_w_hash(censor_config_path)
     if not was_read:
         raise RuntimeError("Failed to read censor config from file.")
+    config_hash = config_file_hash()
 
     with make_image_pipeline() as pipeline:
         futures: list[cc.JobHandle] = []
@@ -46,7 +48,6 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
                 override_cache=False,
                 use_cache=False,
                 config=censor_config,
-                size=1280
             )
             futures.append(pipeline.submit(job))
             cancel_events[ts] = c_event
@@ -55,7 +56,6 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
         checkpoints: deque[float] = deque()
 
         frames_put_out = 0
-        force_reload = False
         reloaded_config = False
         errored = False
         while not stop_event.is_set():
@@ -70,20 +70,22 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
                     cv2.destroyAllWindows()
                     stop_event.set()
                     break
-                elif key == ord("r"):
-                    force_reload = True
+                force_reload = key == ord("r")
 
                 start_times.append(time.time())
                 checkpoints.append(time.time())  # S1
 
-                # reload cache
+                # reload config.yml if it changed
+                config_changed, config_hash = reload_config_if_changed(None if force_reload else config_hash)
+
+                # reload the censor config if it changed. Also when config.yml changed, because the censor config
+                # takes the comfy settings from it
                 was_read, new_config, prev_hash = read_censor_config_from_file_w_hash(
                     path=censor_config_path,
-                    prev_hash=None if force_reload else prev_hash)
+                    prev_hash=None if force_reload or config_changed else prev_hash)
                 if was_read:
-                    assert new_config is not None
                     censor_config = new_config
-                    force_reload = False
+                if was_read or config_changed:
                     reloaded_config = True
 
                 timestamp, screenshot = input_device.get_frame()
@@ -96,6 +98,7 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
                     checkpoints.append(time.time())  # S2
                     # Submit the screenshot for censoring
                     add_image(screenshot, timestamp)
+                    reloaded_config = False
 
                     # Block until at least one analyzes job is done
                     done = cc.wait_any(futures)
@@ -120,17 +123,20 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
 
                 checkpoints.append(time.time())  # S4
 
-                # cursor
-                cx, cy = pyautogui.position()
-                cx = cx - CONFIG.live.cap_left
-                cy = cy - CONFIG.live.cap_top
+                # cursor, only when capturing the screen
+                region = input_device.screen_region()
+                if region is not None:
+                    left, top, width, height = region
+                    cx, cy = pyautogui.position()
+                    cx = cx - left
+                    cy = cy - top
 
-                if 5 < cx < CONFIG.live.cap_width and 5 < cy < CONFIG.live.cap_height:
-                    color = tuple(reversed(CONFIG.live.cursor_color))
-                    frame[cy - 5:cy + 5, cx - 5:cx + 5] = color
-                    if CONFIG.debug:
-                        frame = cv2.putText(frame, f'({cx}, {cy})', (max(cx - 10, 0), max(cy - 10, 0)),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    if 5 < cx < width and 5 < cy < height:
+                        color = tuple(reversed(CONFIG.live.cursor_color))
+                        frame[cy - 5:cy + 5, cx - 5:cx + 5] = color
+                        if CONFIG.debug:
+                            frame = cv2.putText(frame, f'({cx}, {cy})', (max(cx - 10, 0), max(cy - 10, 0)),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
                 checkpoints.append(time.time())  # S5
 

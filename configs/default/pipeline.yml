@@ -8,11 +8,23 @@
 # Applies to every model; a model can override it with its own 'device'.
 device: cpu
 
+# Number of worker threads that run the models. Only read at startup.
+n_workers: 4
+
+# The maximum number of jobs that can be active at any moment. Only read at startup.
+# Limit this to reduce RAM usage.
+# Keep >=n_workers, otherwise the workers have idle time
+# Set to 0 for unlimited jobs.
+max_concurrent_jobs: 128
+
 models:
   #### Main nudity detection model, runs on every image.
   - name: nudenet
     path: models/nudenet/640m.onnx
     resize: rect                 # letterbox | stretch | rect (rect: dynamic-input models)
+    # Input size of this (dynamic-input) model. Larger finds smaller body parts (e.g. group photos)
+    # but is slower: 640 (fast), 1280, 2560. Must be a multiple of 32. Only read at startup.
+    imgsz: 640
     agnostic_nms: true           # one box per region, across classes
     nms_iou: 0.75
     max_det: 0                   # 0 = no limit

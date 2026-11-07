@@ -17,9 +17,15 @@ class WindowDevice(OutputDevice):
         init_image = cv2.resize(init_image, (CONFIG.live.cap_width, CONFIG.live.cap_height))
         cv2.imshow(window_name, init_image)
         self.device = window_name
+        self._frame_size = (CONFIG.live.cap_width, CONFIG.live.cap_height)
 
     def close(self):
         cv2.destroyAllWindows()
 
     def push_frame(self, frame: np.ndarray):
+        # follow the frame size (capture region changed, or a webcam with another resolution)
+        size = (frame.shape[1], frame.shape[0])
+        if size != self._frame_size:
+            cv2.resizeWindow(self.device, *size)
+            self._frame_size = size
         cv2.imshow(self.device, frame)

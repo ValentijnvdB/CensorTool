@@ -135,8 +135,8 @@ configs/
 
 | **File**              | **Contents**                                                                    | **Required** |
 |-----------------------|---------------------------------------------------------------------------------|--------------|
-| `config.yml`          | General settings: image size, video fps, live capture region, workers, etc.    | No, falls back to `configs/default/config.yml` |
-| `pipeline.yml`        | Which models are loaded, on which device, and their detection thresholds.       | Yes          |
+| `config.yml`          | General settings: image size, video fps, live capture region, cursor, etc.     | No, falls back to `configs/default/config.yml` |
+| `pipeline.yml`        | Which models are loaded, on which device, workers and detection thresholds.     | Yes          |
 | `censor_config.yml`   | What is censored and how. Can be swapped per run without reloading the models. | Yes          |
 
 Select a profile with `--profile <name>` (or `--profile <path/to/profile/dir>`). Without it, you are asked to pick
@@ -144,6 +144,10 @@ one from a list (arrow keys + enter, `default` on top). When Censor Tool is not 
 the `default` profile is used.
 `--config`, `--censor-config` and `--pipeline` override a single file of the selected profile, e.g.
 `python main.py file --profile strict --pipeline ./my_pipeline.yml`.
+
+During live and webcam censoring, changes to `config.yml` and `censor_config.yml` are applied as soon as the file
+is saved (press `r` in the window to force a reload). An invalid file is reported and the previous settings are kept.
+`pipeline.yml` is only read at startup.
 
 ### Pipeline config
 
@@ -154,6 +158,10 @@ the `default` profile is used.
 - `min_confidence`: score floor per model. Detections below it are dropped before anything else,
   so keep it at or below the lowest `min_probability` in your censor configs.
 - `labels`: renames labels. The segmentation model's `person` is renamed to `BODY`.
+- `imgsz`: input size of a model with a dynamic input size (NudeNet). Larger finds smaller body parts but is slower
+  (`640`, `1280`, `2560`, a multiple of 32). Models with a fixed input size ignore it.
+- `n_workers`: number of worker threads that run the models (default `4`).
+- `max_concurrent_jobs`: maximum number of jobs active at once, limit it to reduce RAM usage (default `128`, `0` = unlimited).
 
 ### Censor config
 

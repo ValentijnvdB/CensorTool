@@ -84,7 +84,6 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
     job = cc.Job(
         job_id=job_id,
         image=image,
-        size=1280,
         output_path=str(output_path) if output_path else None,
         early_exit=early_exit,
         override_cache=False,

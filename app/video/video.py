@@ -52,7 +52,6 @@ def censor_videos(
                 use_cache=True,
                 cache_base_dir=str(constants.video_cache_path),
                 config=censor_config,
-                size=CONFIG.picture_size,
                 censor_fps=CONFIG.video_censor_fps
             )
             completed = pl.submit(vid_job)

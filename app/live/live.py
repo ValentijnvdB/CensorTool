@@ -7,7 +7,7 @@ import mss
 from loguru import logger
 
 import constants
-from input_devices.generic import InputDevice
+from .input_devices.generic import InputDevice
 from .output_devices.generic import OutputDevice
 
 from ..config import CONFIG

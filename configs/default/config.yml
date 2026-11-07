@@ -2,16 +2,10 @@
 #### Models, GPU acceleration and detection thresholds are set in the
 #### pipeline config (pipeline.yml in the profile, or pass another one with --pipeline).
 #### To use an Nvidia GPU, set 'device: cuda' (or cuda:N) there.
-
-###################################################################
-#### Image size. The images are resized to reduce processing time.
-#### The value determines what size the longest edge is after resizing.
-#### Must be a multiple of 32.
-#### 640: the nudenet default.
-#### 1280: works well
-#### 2560: for large images and group photos
-#### 0: for original resolution
-picture_size: 640
+#### The number of workers, concurrent jobs and the model input size (imgsz) are set there too.
+####
+#### While live/webcam censoring runs, changes to this file are applied
+#### immediately after saving, no restart needed.
 
 ##################################################################
 #### Video censor does not run the model on every single frame of a
@@ -28,9 +22,8 @@ video_censor_fps: 15
 #### part of your screen and displaying it censored on another
 #### part of your screen.  Here, configure what part of the screen
 #### holds the uncensored content. Works best if you have two displays.
-live_cap_monitor: 0  # 0 means 'all monitors'.  You can almost certainly leave this as 0.
 live_cap_top: 0
-live_cap_left: 500
+live_cap_left: 0
 live_cap_height: 1080
 live_cap_width: 1920
 
@@ -47,52 +40,3 @@ comfy_port: 8188
 
 # Comfy-ui Workflow. (Not provided with the tool, so make sure you add one yourself)
 comfy_workflow: "./data/assets/workflow.json"
-
-
-################################################
-# Input Delete Probability
-#### If you set this to 1, all uncensored files
-#### will be deleted after censoring.  If you set
-#### this to a number between 0 and 1, there will
-#### be a random chance of the input being deleted.
-#### For example, if you set it to 0.7, for each
-#### uncensored file, there is a 70% chance it will
-#### be deleted.
-#### I ***HIGHLY*** recommend testing censoring
-#### with this set to zero first.  Using this
-#### setting is dangerous.  The tool will try
-#### to verify that the file was successfully
-#### censored before deleting, but if there is
-#### some issue with the image or video writing
-#### process, the tool might not know.
-#### SET THIS AT YOUR OWN RISK.
-#### DON'T COME CRYING IF YOUR FILE WAS DELETED
-input_delete_probability: 0
-
-########################################################################
-############################### ADVANCED ###############################
-########################################################################
-# The number of workers in the threadpool
-n_workers: 4
-
-# The maximum number of jobs that can be active at any moment.
-# Limit this to reduce RAM usage.
-# Keep >=n_workers, otherwise the workers have idle time
-# Set to 0 for unlimited jobs.
-max_concurrent_jobs: 128
-
-# This determines how various censor styles deal with overlap
-# You probably don't need to change this
-censor_overlap_strategy:
-    'blur': 'single-pass'
-    'bar': 'none'
-    'pixel': 'single-pass'
-    'debug': 'none'
-
-# this determines how pixel and blur are applied
-# "scale" with image size.  'feature' is recommended
-censor_scale_strategy: 'feature'  # scales N->1 by min feature dimension, with a 100 base (so a 200x400 feature would be 2N->1)
-# censor_scale_strategy: 'image' # scales N->1 by max image dimension, with 1000 base (so a 2000x1200 image would be 2N->1)
-# censor_scale_strategy: 'none' # uses N -> 1 reduction
-
-

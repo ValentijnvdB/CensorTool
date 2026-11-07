@@ -48,7 +48,6 @@ def censor_images(
                 use_cache=True,
                 cache_base_dir=str(constants.image_cache_path),
                 config=censor_config,
-                size=CONFIG.picture_size
             )
             futures.append( pl.submit(job) )
             return True
