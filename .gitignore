@@ -6,3 +6,5 @@
 /data/**
 !/data/assets/
 !/data/assets/**
+/configs/*
+!/configs/default/

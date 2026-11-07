@@ -34,7 +34,7 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
         raise RuntimeError("Failed to read censor config from file.")
     config_hash = config_file_hash()
 
-    with make_image_pipeline() as pipeline:
+    with make_image_pipeline(mode='p') as pipeline:
         futures: list[cc.JobHandle] = []
         cancel_events: dict[float, Event] = {}
         def add_image(image: np.ndarray, ts: float) -> None:
