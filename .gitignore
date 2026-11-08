@@ -8,3 +8,4 @@
 !/data/assets/**
 /configs/*
 !/configs/default/
+/.env
