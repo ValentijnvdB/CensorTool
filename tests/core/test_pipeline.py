@@ -254,11 +254,13 @@ def test_size_defaults_to_model_input_size(cc, pipeline_config, images_dir, tmp_
         assert p.submit(cc.Job(image=image, cache_base_dir=cache, size=640)).wait().result["cached_models"] == ["nudenet"]
 
 
-def test_example_pipeline_yml_loads(cc, pipeline_config, example_configs) -> None:
+def test_example_pipeline_yml_loads(cc, example_configs) -> None:
+    # The nudity profile runs only Nevermore big.
     pipeline_yml, _ = example_configs
     p = cc.ImagePipeline.from_yaml(str(pipeline_yml), max_workers=1)
-    assert p.models == ["nudenet", "people", "landmarks"]
-    assert p.labels == cc.ImagePipeline(**pipeline_config, max_workers=1).labels
+    assert p.models == ["nevermore"]
+    assert {"face", "female_breast_exposed", "person"} <= set(p.labels)
+    assert set(p.labels.values()) == {"nevermore"}
 
 
 def test_example_censor_config_is_valid(cc, images_dir, example_configs, capfd) -> None:

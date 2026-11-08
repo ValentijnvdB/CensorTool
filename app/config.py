@@ -14,7 +14,6 @@ import constants
 from utils import hash_utils
 
 
-DEFAULT_PROFILE = 'default'
 CONFIG_FILE = 'config.yml'
 PIPELINE_FILE = 'pipeline.yml'
 CENSOR_CONFIG_FILE = 'censor_config.yml'
@@ -54,7 +53,7 @@ class Config:
 
     comfy_host: str                         = "localhost"
     comfy_port: int                         = 8188
-    comfy_workflow: str|Path                = "./data/assets/workflow.json"
+    comfy_workflow: str|Path                = "./data/workflow.json"
 
     # --- from the command line ---
     debug: bool                             = False
@@ -65,24 +64,31 @@ class Config:
     max_concurrent_jobs: int                = DEFAULT_MAX_CONCURRENT_JOBS
 
     # pipeline.yml listing the models the backend loads (model paths in it are relative to the working dir)
-    pipeline_path: Path                     = constants.profiles_path / DEFAULT_PROFILE / PIPELINE_FILE
+    pipeline_path: Path | None              = None
 
 
 def list_profiles() -> list[str]:
-    """Names of the profiles in the configs directory: 'default' first, the others alphabetically."""
+    """Names of the profiles in the configs directory, alphabetically."""
     if not constants.profiles_path.is_dir():
         return []
     names = [p.name for p in constants.profiles_path.iterdir() if p.is_dir()]
-    return sorted(names, key=lambda name: (name != DEFAULT_PROFILE, name.lower(), name))
+    return sorted(names, key=lambda name: (name.lower(), name))
 
 
 def resolve_profile_dir(profile: str | Path | None) -> Path:
     """
     Find the directory of a profile.
     An existing directory is used as is, otherwise the profile is looked up by name in the configs directory.
+    Without a profile, the first one alphabetically is used (with a warning).
     """
     if profile is None:
-        profile = DEFAULT_PROFILE
+        profiles = list_profiles()
+        if not profiles:
+            raise ProfileError(f"No profiles found in '{constants.profiles_path}'.")
+        profile = profiles[0]
+        if len(profiles) > 1:
+            logger.warning(f"No profile given, using '{profile}' (the first alphabetically). "
+                           f"Pick one with --profile <name>. Available profiles: {', '.join(profiles)}.")
 
     path = Path(profile)
     if path.is_dir():
@@ -102,13 +108,13 @@ def resolve_profile_files(profile: str | Path | None = None,
                           pipeline_file: str | Path | None = None) -> tuple[Path, Path, Path]:
     """
     Determine which config files to use: the profile's files, with any explicitly given file overriding the
-    profile's one. A profile without a config.yml falls back to the one of the default profile.
+    profile's one.
 
     :return: (config, censor_config, pipeline) paths
     """
     profile_dir = resolve_profile_dir(profile)
 
-    def pick(override: str | Path | None, filename: str, fallback: Path | None = None) -> Path:
+    def pick(override: str | Path | None, filename: str) -> Path:
         if override is not None:
             path = Path(override)
             if not path.is_file():
@@ -118,12 +124,9 @@ def resolve_profile_files(profile: str | Path | None = None,
         path = profile_dir / filename
         if path.is_file():
             return path
-        if fallback is not None and fallback.is_file():
-            logger.info(f"Profile '{profile_dir.name}' has no {filename}, using '{fallback}'.")
-            return fallback
         raise ProfileError(f"Profile '{profile_dir.name}' ({profile_dir}) has no {filename}.")
 
-    config_path = pick(config_file, CONFIG_FILE, fallback=constants.profiles_path / DEFAULT_PROFILE / CONFIG_FILE)
+    config_path = pick(config_file, CONFIG_FILE)
     censor_config_path = pick(censor_config_file, CENSOR_CONFIG_FILE)
     pipeline_path = pick(pipeline_file, PIPELINE_FILE)
     return config_path, censor_config_path, pipeline_path
@@ -361,8 +364,9 @@ def censor_config_has_changed(prev_hash: str, path: Path = None) -> Config:
 
 
 # Private variables
-_default_censor_config_path = constants.profiles_path / DEFAULT_PROFILE / CENSOR_CONFIG_FILE
-_config_path: Path = constants.profiles_path / DEFAULT_PROFILE / CONFIG_FILE
+# Set by init_configs.
+_default_censor_config_path: Path | None = None
+_config_path: Path | None = None
 
 # Public variables
 # Always updated in place (never rebound), so modules that did 'from config import CONFIG' see the changes.
@@ -420,10 +424,11 @@ def init_configs(profile: str | Path | None = None,
     """
     global _default_censor_config_path, _config_path
 
+    profile_dir = resolve_profile_dir(profile)
     config_path, censor_config_path, pipeline_path = resolve_profile_files(
-        profile, config_file, default_censor_config, pipeline_file)
+        profile_dir, config_file, default_censor_config, pipeline_file)
 
-    logger.info(f"Using profile '{profile or DEFAULT_PROFILE}': config={config_path}, "
+    logger.info(f"Using profile '{profile_dir.name}': config={config_path}, "
                 f"censor_config={censor_config_path}, pipeline={pipeline_path}")
 
     try:

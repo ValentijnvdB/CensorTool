@@ -137,15 +137,19 @@ def serve_http(host, port, ssl_file, ssl_key, use_ssl, debug):
 
 
 def select_profile() -> str:
-    """Let the user pick a profile in the terminal. Falls back to the default profile when that is not possible."""
-    from app.config import DEFAULT_PROFILE, list_profiles
+    """
+    Let the user pick a profile in the terminal. A single profile is used without asking.
+    Returns None when there is nothing to pick from or no terminal to ask in: the first profile alphabetically is
+    then used (with a warning).
+    """
+    from app.config import list_profiles
     from utils import cli_select
 
     profiles = list_profiles()
     if len(profiles) == 1:
         return profiles[0]
     if not profiles or not cli_select.is_interactive():
-        return DEFAULT_PROFILE
+        return None
 
     try:
         return cli_select.select("Select a profile:", profiles)
@@ -170,7 +174,7 @@ def main():
 
     parser.add_argument('-p', '--profile', default=None,
                         help="Config profile: a name of a directory in './configs/' or a path to a profile directory. "
-                             "If not given, you are asked to select one (or 'default' is used when not run in a terminal).")
+                             "If not given, you are asked to select one (or the first one alphabetically is used when not run in a terminal).")
     parser.add_argument('--config', default=None, help="Path to the main config file. Overrides the profile's one.")
     parser.add_argument('-cc', '--censor-config', default=None,
                         help="Path to the censor config file. Overrides the profile's one.")
@@ -255,7 +259,7 @@ def main():
         if args.device == -1:
             logger.warning(f"No device id provided, using default (0).")
         start_live_censor(
-            device_id=args.device,
+            device_id=max(args.device, 0),
             use_vcam=args.vcam,
             vcam_width=args.vcam_w,
             vcam_height=args.vcam_h,

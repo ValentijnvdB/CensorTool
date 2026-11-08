@@ -7,5 +7,6 @@
 !/data/assets/
 !/data/assets/**
 /configs/*
-!/configs/default/
+!/configs/nudity/
+!/configs/privacy/
 /.env

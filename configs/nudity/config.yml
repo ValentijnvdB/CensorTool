@@ -50,4 +50,4 @@ comfy_host: "localhost"
 comfy_port: 8188
 
 # Comfy-ui Workflow. (Not provided with the tool, so make sure you add one yourself)
-comfy_workflow: "./data/assets/workflow.json"
+comfy_workflow: "./data/workflow.json"

@@ -1,189 +1,406 @@
 # Censor Tool
 
-Censor Tool is collection of programs to censor images and videos.
+Censor Tool finds things in images, videos and GIFs, and on your screen or webcam in real time, and censors them.
+What it looks for is up to the [YOLO](https://docs.ultralytics.com/) models you give it, so it works for more than
+one purpose:
 
+- **Nudity**: censor nudity in pictures, videos, your screen or a video call (the `nudity` profile).
+- **Privacy**: blur faces and license plates in photos, dashcam or street footage before you share it
+  (the `privacy` profile).
+- **Screen recordings and streams**: hide phones, laptops and monitors that may show private information.
+- **Anything else**: any object a YOLO model is trained on, such as logos, weapons or cigarettes.
+  See [Other models](#other-models).
 
-*This readme is still under construction*
+How it is censored (bars, blur, pixelation, stickers, ...) is fully configurable.
 
-## Feature overview
+- Censor images, videos and GIFs from a file or folder.
+- Censor your screen or webcam in real time, in a window or as a virtual camera.
+- Use any YOLO detection or segmentation model (ONNX), or several at once.
+- Choose per label what is censored and how: style, shape, margins, borders, text or sticker overlays,
+  inverse censoring, clipping to the body outline.
+- Group settings in profiles and switch between them.
+- An HTTP server to censor images, videos and video streams from other programs, such as the browser extension
+  [CensorExtension](https://github.com/ValentijnvdB/CensorExtension).
+- Runs on the CPU or an NVIDIA GPU, with a pure-Python backend or an optional, faster C++ backend.
 
----
-- Censor images and videos.
-- Censor your screen or webcam in real-time (if you have a dedicated GPU).
-- Customize what and how features are censored.
-- Censor images remotely via the HTTP endpoint
-- Browser extension to automatically censor images: [CensorExtension](https://github.com/ValentijnvdB/CensorExtension.git)
+## Contents
 
-### Planned
-- [ ] Video censor via HTTP
-- [x] ~~Automatic model downloads~~ (Expect for nudenet, because it requires to login)
+- [Quick start](#quick-start)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Backends](#backends)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
 
-## Installation Guide
+## Quick start
+
+```
+git clone https://github.com/ValentijnvdB/CensorTool.git
+cd CensorTool
+pip install -r requirements.txt
+python main.py init
+```
+
+Download [`det_v11_big_640.onnx`](https://huggingface.co/kinkyrvn/nevermore/blob/main/det_v11_big/det_v11_big_640.onnx)
+to `models/nevermore/det_v11_big/`, put your images in `data/uncensored/` and run
+
+```
+python main.py file --profile nudity
+```
+
+The censored images appear in `data/censored/`.
+
+## Installation
 
 ### Requirements
-You will need two programs for the easiest installation:
-1. [git](https://git-scm.com/downloads)
-2. Your favorite program to create virtual environments. I prefer [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install#windows-installation), so that is what will be used in this guide.
 
-For GPU support you'll need a Nvidia GPU and have [CUDA](https://developer.nvidia.com/cuda-downloads) installed.
-Then set `device: cuda` in `configs/<profile>/pipeline.yml`.
+- Python 3.12 or newer.
+- [git](https://git-scm.com/downloads).
+- [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`, for video and GIF censoring.
+- Optional: an NVIDIA GPU with [CUDA](https://developer.nvidia.com/cuda-downloads) and cuDNN, for faster
+  censoring. Real-time censoring works on a CPU, but a GPU makes it a lot smoother.
+- Optional, for the virtual camera (`--vcam`): a virtual camera driver, see
+  [pyvirtualcam](https://github.com/letmaik/pyvirtualcam#supported-virtual-cameras) (OBS on Windows and macOS,
+  v4l2loopback on Linux).
 
-### Installation:
-1. Open a terminal or command prompt in the location you want to store the program.
-2. Clone this repo. 
+### Steps
+
+1. Clone the repository.
     ```
     git clone https://github.com/ValentijnvdB/CensorTool.git
     cd CensorTool
     ```
-3. Create and activate a virtual environment (optional step, but highly recommend).
+2. Create and activate a virtual environment (optional, but recommended), for example with
+   [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install):
     ```
-   conda create -n CensorTool python=3.14
-   conda activate CensorTool
-   ```
-4. Install the dependencies.
+    conda create -n CensorTool python=3.12
+    conda activate CensorTool
     ```
-   # Basic install
-   pip install -r requirements.txt
-   
-   # For GPU support (make sure your GPU is supported by onnxruntime before you install)
-   pip install -r requirements-gpu.txt
-   ```
-   Optional: install the faster C++ backend (`censor_core`) and set `backend: cpp` in
-   `configs/<profile>/pipeline.yml`, see [Backends](#backends). Without it the Python backend is used.
-5. Run the init process. This will create all required directories.
+3. Install the dependencies.
+    ```
+    # CPU only
+    pip install -r requirements.txt
+
+    # NVIDIA GPU (check that your CUDA version is supported by onnxruntime-gpu first)
+    pip install -r requirements-gpu.txt
+    ```
+   For the GPU, also set `device: cuda` in `configs/<profile>/pipeline.yml`.
+4. Create the data folders.
     ```
     python main.py init
     ```
-6. Download the models and place them in the ```./models/``` folder:
-    - NudeNet ```640m.onnx``` from https://github.com/notAI-tech/NudeNet/releases (as ```models/nudenet/640m.onnx```)
-    - a YOLO segmentation model for body outlines, e.g. ```yolo26n-seg.onnx``` (as ```./models/yolo/yolo26n-seg.onnx```)
-    - the PFLD landmark model for eye bars (as ```models/eye_detection/pfld.onnx```)
-
-   The models are listed in ```configs/default/pipeline.yml```, see [Pipeline config](#pipeline-config).
-7. Run the validate process. This will run a few tests to see what features work.
+5. Download the models, see [Models](#models).
+6. Check what works.
     ```
     python main.py validate
     ```
+   This loads the models on the CPU and the GPU and tests the screen capture and the virtual camera, then prints
+   which modes should work.
 
+Optionally, install the faster [C++ backend](#backends).
 
-You are now setup to censors images, videos and use real-time censoring.
-To censor images, place your images in the ```./data/uncensored``` folder then run ```python main.py images```
-The censored pictures will appear in ```./data/censored```.
-To run real time censoring, use ```python main.py live``` or ```python main.py webcam```.
-For all modes and arguments, check the table below.
+### Models
 
-## Running Censor Tool
+The models are not included in the repository. Each profile lists the models it uses in its `pipeline.yml`; download
+them to the paths below, or change the paths in `pipeline.yml`.
 
-Running censor tool requires you to provided the mandatory 'mode' argument, follwed by zero or more optional arguments. They are all explained below.
+#### Nudity (`nudity` profile)
+
+| Model | Used for | Path | Download |
+|-------|----------|------|----------|
+| Nevermore big | Faces, breasts, genitals, buttocks, feet and people. **Required.** | `models/nevermore/det_v11_big/det_v11_big_640.onnx` | [Hugging Face](https://huggingface.co/kinkyrvn/nevermore/tree/main/det_v11_big) |
+| YOLO segmentation | Optional: body outlines (`BODY`), for full-body censoring and `clip_to`. | `models/yolo/yolo26n-seg.onnx` | Export with [Ultralytics](https://docs.ultralytics.com/modes/export/), see below |
+| PFLD 68-point landmarks | Optional: eye bars (`eyes`). | `models/eye_detection/pfld.onnx` | e.g. [PFLD_68points_Pytorch](https://github.com/github-luffy/PFLD_68points_Pytorch), exported to ONNX (112x112 input) |
+
+Nevermore comes in more sizes (`tiny` to `huge`) and fp16 versions, see its
+[model card](https://huggingface.co/kinkyrvn/nevermore). To use another size, change `path` in `pipeline.yml`.
+
+The optional models are commented out in `configs/nudity/pipeline.yml`; uncomment the `people` model for body
+outlines and the `landmarks` section for eye bars. To make the segmentation model, install Ultralytics (only needed
+for the export) and export a YOLO segmentation model to ONNX:
+
 ```
-python main.py <mode> <args>
+pip install ultralytics
+yolo export model=yolo26n-seg.pt format=onnx
 ```
 
-### Modes
+`n` (nano) is the fastest; `s`, `m`, `l` and `x` are more accurate.
 
+[NudeNet](https://github.com/notAI-tech/NudeNet/releases) (`640m.onnx`) works as an alternative to Nevermore. It has
+different labels (`FACE_FEMALE`, `FEMALE_BREAST_EXPOSED`, ...), so change both `pipeline.yml` and
+`censor_config.yml`; see the NudeNet examples in [docs/pipeline_config.md](docs/pipeline_config.md#example-setups) and
+[docs/censor_config.md](docs/censor_config.md#labels).
 
-| **Mode**   | **Description**                                                          |
-|------------|--------------------------------------------------------------------------|
-| **image**  | Censors images in the specified input directory or file.                 |
-| **video**  | Censors videos in the specified input directory or file.                 |
-| **all**    | Censors both images and videos in the specified input directory or file. |
-| **live**   | Real-time censoring of your screen or video stream.                      |
-| **webcam** | Real-time censoring of webcam feed.                                      |
-| **http**   | Starts an HTTP server for serving censored content via a web interface.  |
+#### Privacy (`privacy` profile)
 
+Blurs faces and puts a bar over license plates, e.g. in photos, dashcam or street footage.
 
-### Parameters Overview
+| Model | Used for | Path | Download |
+|-------|----------|------|----------|
+| YOLO11 license plate detection | License plates (`license_plate`). | `models/license_plates/license-plate-finetune-v1n.onnx` | [Hugging Face](https://huggingface.co/morsetechlab/yolov11-license-plate-detection) (AGPL-3.0) |
+| YOLO11 face detection | Faces (`face`). | `models/faces/yolov11n-face.onnx` | [Hugging Face](https://huggingface.co/AdamCodd/YOLOv11n-face-detection), download `model.onnx` and rename it (Apache-2.0) |
 
-| **Category**      | **Parameter**          | **Type** | **Description**                                                                     | **Default Value**                        |
-|-------------------|------------------------|----------|-------------------------------------------------------------------------------------|------------------------------------------|
-| **Core**          | `mode`                 | str      | Mode to use.                                                                        | -                                        |
-|                   | `-i, --input`          | Path     | Path to input file or directory.                                                    | `./uncensored/`                          |
-|                   | `-o, --output`         | Path     | Path to output directory.                                                           | `./censored/`                            |
-| **Configuration** | `-p, --profile`        | str/Path | Config profile: a directory name in `./configs/`, or a path to a profile directory. | asks, or `default` if not in a terminal   |
-|                   | `--config`             | Path     | Path to the main config file. Overrides the profile's one.                          | from profile                             |
-|                   | `-cc, --censor-config` | Path     | Path to the censor config file. Overrides the profile's one.                        | from profile                             |
-|                   | `-pl, --pipeline`      | Path     | Path to the pipeline config file (which models are loaded). Overrides the profile's. | from profile                             |
-| **Live & Webcam** | `--live-mode`          | str      | Live mode: quick or precise. Quick is recommend.                                    | `quick`                                  |
-|                   | `--device`             | int      | Input device to use. -1 means screenshots, >=0 needs to be a valid video device id. | `-1` on Live mode and `0` on Webcam mode |
-|                   | `--vcam`               | bool     | Whether to output to a virtual camera.                                              | `False`                                  |
-|                   | `--vcam-w`             | int      | Virtual camera width.                                                               | `1920`                                   |
-|                   | `--vcam-h`             | int      | Virtual camera height.                                                              | `1080`                                   |
-|                   | `--vcam-fps`           | int      | Virtual camera target fps.                                                          | `10`                                     |
-| **General Flags** | `--override-cache`     | bool     | Recompute features by overriding the cache.                                         | `False`                                  |
-|                   | `--skip-existing`      | bool     | Skip files that already exist in the output directory.                              | `False`                                  |
-|                   | `--only-analyze`       | bool     | Only analyze images/videos (no censoring).                                          | `False`                                  |
-|                   | `--debug`              | bool     | Enable debug mode.                                                                  | `False`                                  |
-| **Server**        | `--port`               | int      | Port to run the server on.                                                          | `8443`                                   |
-|                   | `--host`               | str      | Host to run the server on.                                                          | `localhost`                              |
-|                   | `--ssl-cert`           | Path     | Path to certificate file.                                                           | `cert.pem`                               |
-|                   | `--ssl-key`            | Path     | Path to key file.                                                                   | `key.pem`                                |
+Both come in larger, more accurate versions (`v1s` to `v1x` for plates, `YOLOv11x` for faces).
 
+```
+python main.py file --profile privacy -i <photos or videos>
+```
+
+#### Other models
+
+Censor Tool runs any YOLO model exported to ONNX (YOLOv8, YOLO11, YOLO26 and other Ultralytics exports, detection or
+segmentation), so you can censor anything a model is trained on. Some places to look:
+
+- Any COCO model, such as the segmentation model above, finds 80 everyday objects: `person`, `car`, `laptop`, `tv`,
+  `cell phone`, ... Useful to hide screens and phones in screen recordings.
+- [Hugging Face](https://huggingface.co/models?search=yolo) and [Roboflow Universe](https://universe.roboflow.com/)
+  have models for logos, weapons, smoking, ID cards and much more.
+
+To add a model:
+
+1. Get the model as an `.onnx` file. Models published as `.pt` files have to be exported first:
+   `yolo export model=<file>.pt format=onnx` (needs `pip install ultralytics`).
+2. Put it in `models/`, e.g. `models/logos/logos.onnx`.
+3. Add it to `models:` in the profile's `pipeline.yml` (or make a new profile, see [Profiles](#profiles)):
+    ```yaml
+    models:
+      - name: logos                       # any unique name
+        path: models/logos/logos.onnx
+        min_confidence: 0.25              # at or below the min_probability in censor_config.yml
+        # classes: [logo]                 # optional: keep only these classes
+        # labels: {logo: brand_logo}      # optional: rename classes
+    ```
+4. Add the model's labels to `features_to_censor` in `censor_config.yml`. The labels are the model's class names;
+   they are usually on the model card, or print them with
+   `python -c "import onnxruntime as o, sys; print(o.InferenceSession(sys.argv[1]).get_modelmeta().custom_metadata_map.get('names'))" <model.onnx>`.
+5. Run `python main.py validate --profile <name>` to check that the model loads.
+
+Some things to keep in mind:
+
+- Labels must be unique across the models in one `pipeline.yml`. If two models both have a `face` label (e.g.
+  Nevermore and the face model), rename one with `labels:`.
+- A model only runs when the censor config needs one of its labels.
+- Models with a dynamic input size need `resize: rect` (and optionally `imgsz`), see
+  [docs/pipeline_config.md](docs/pipeline_config.md#models) for all settings.
+- Check a model's license before you use it; many YOLO models are AGPL-3.0.
+
+## Usage
+
+```
+python main.py <mode> [arguments]
+```
+
+| Mode               | Description |
+|--------------------|-------------|
+| `file` (`f`, `files`) | Censor the images and videos in the input folder (or a single file). |
+| `live`             | Censor a region of your screen in real time. |
+| `webcam`           | Censor a webcam in real time. |
+| `http` (`https`)   | Start the HTTP server. |
+| `init`             | Create the data folders. |
+| `validate`         | Check which features work on this machine. |
+
+Every mode uses a profile. Without `--profile` you are asked to pick one; see
+[Profiles](#profiles).
+
+### Censoring files
+
+```
+python main.py file [-i <input>] [-o <output>] [-r]
+```
+
+Censors every image (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp`, `.avif`) and video (`.mp4`, `.avi`, `.gif`)
+in `data/uncensored/` and writes the results to `data/censored/`. `-i` can be a folder or a single file; `-r`
+includes subfolders.
+
+Detections are cached in `cache/`, so censoring the same file again with a different censor config only redoes the
+drawing, not the detection. Use `--override-cache` to detect again, `--skip-existing` to skip files that already
+exist in the output folder, and `--only-analyze` to fill the cache without censoring.
+
+### Live and webcam censoring
+
+```
+python main.py live      # your screen
+python main.py webcam    # webcam 0, or --device <id>
+```
+
+`live` captures the region set in `config.yml` (`live_cap_*`, the full 1920x1080 screen by default) and shows it
+censored in a window. This works best with two displays: the content on one, the censored window on the other.
+`webcam` does the same with a camera.
+
+With `--vcam` the output goes to a virtual camera instead of a window, so it can be used in video calls or OBS
+(`--vcam-w`, `--vcam-h` and `--vcam-fps` set its size and frame rate).
+
+In the window, press `q` to quit and `r` to reload the configs. Changes to `config.yml` and `censor_config.yml`
+are also picked up as soon as they are saved, so you can tune the censoring while it runs. `pipeline.yml` is only
+read at startup.
+
+### HTTP server
+
+```
+python main.py http [--host localhost] [--port 8443] [--ssl --ssl-cert cert.pem --ssl-key key.pem]
+```
+
+Starts a server with endpoints to censor images (`/censor_image`), videos (`/censor_video`) and a stream of
+frames over a WebSocket (`/censor_frame`), and to only detect (`/detect_features`). The models are loaded once at
+startup; a request can send its own censor config. This is what
+[CensorExtension](https://github.com/ValentijnvdB/CensorExtension) uses.
+
+The endpoints and their request and response formats are described in [docs/http_api.md](docs/http_api.md).
+
+### Arguments
+
+| Group | Argument | Default | Description |
+|-------|----------|---------|-------------|
+| General | `mode` | - | The mode, see above. |
+| | `-i`, `--input` | `data/uncensored` | Input file or folder (`file` mode). |
+| | `-o`, `--output` | `data/censored` | Output folder (`file` mode). |
+| | `-r`, `--recursive` | off | Include subfolders of the input folder. |
+| | `--override-cache` | off | Detect again instead of using the cache. |
+| | `--skip-existing` | off | Skip files that already exist in the output folder. |
+| | `--only-analyze` | off | Only detect (fills the cache), don't censor. |
+| | `--debug` | off | More logging and debug output. |
+| Configuration | `-p`, `--profile` | asks | Profile: a folder name in `configs/`, or a path to a profile folder. |
+| | `--config` | from profile | Use this `config.yml` instead of the profile's. |
+| | `-cc`, `--censor-config` | from profile | Use this `censor_config.yml` instead of the profile's. |
+| | `-pl`, `--pipeline` | from profile | Use this `pipeline.yml` instead of the profile's. |
+| Live & webcam | `--device` | `-1` (live), `0` (webcam) | Input: `-1` is the screen, `0` or higher a camera id. |
+| | `--vcam` | off | Output to a virtual camera instead of a window. |
+| | `--vcam-w`, `--vcam-h` | `1920`, `1080` | Virtual camera size. |
+| | `--vcam-fps` | `10` | Virtual camera frame rate. |
+| Server | `--host` | `localhost` | Address to listen on. Use `0.0.0.0` to accept connections from other devices. |
+| | `--port` | `8443` | Port to listen on. |
+| | `--ssl` | off | Use HTTPS. |
+| | `--ssl-cert`, `--ssl-key` | `cert.pem`, `key.pem` | Certificate and key for HTTPS. |
+
+### Folders
+
+| Folder | Contents |
+|--------|----------|
+| `data/uncensored/` | Default input. |
+| `data/censored/` | Default output. |
+| `data/stickers/<category>/` | Sticker images for [overlays](docs/censor_config.md#overlays). |
+| `data/server/` | Files uploaded to and produced by the HTTP server. |
+| `data/logs/` | Log files. |
+| `cache/` | Cached detections (`images/`, `videos/`, `server/`). Safe to delete. |
+| `models/` | The models. |
+| `configs/` | The profiles. |
 
 ## Configuration
 
-Configs are grouped in profiles. Each profile is a directory in `./configs/`:
+### Profiles
+
+Settings are grouped in profiles. Each profile is a folder in `configs/` with three files:
 
 ```
 configs/
-├── default/
+├── nudity/
 │   ├── config.yml
 │   ├── censor_config.yml
 │   └── pipeline.yml
+├── privacy/
+│   └── ...
 └── <your-profile>/
-    ├── censor_config.yml
-    ├── pipeline.yml
-    └── config.yml          (optional)
+    └── ...
 ```
 
-| **File**              | **Contents**                                                                    | **Required** |
-|-----------------------|---------------------------------------------------------------------------------|--------------|
-| `config.yml`          | General settings: image size, video fps, live capture region, cursor, etc.     | No, falls back to `configs/default/config.yml` |
-| `pipeline.yml`        | Which models are loaded, on which device, workers and detection thresholds.     | Yes          |
-| `censor_config.yml`   | What is censored and how. Can be swapped per run without reloading the models. | Yes          |
+| File | Contents | Reference |
+|------|----------|-----------|
+| `config.yml` | General settings: video sampling rate, live capture region, ComfyUI connection. | [docs/config.md](docs/config.md) |
+| `pipeline.yml` | The backend, which models run, and on which device. | [docs/pipeline_config.md](docs/pipeline_config.md) |
+| `censor_config.yml` | What is censored and how. | [docs/censor_config.md](docs/censor_config.md) |
 
-Select a profile with `--profile <name>` (or `--profile <path/to/profile/dir>`). Without it, you are asked to pick
-one from a list (arrow keys + enter, `default` on top). When Censor Tool is not run in a terminal (e.g. in Docker),
-the `default` profile is used.
-`--config`, `--censor-config` and `--pipeline` override a single file of the selected profile, e.g.
-`python main.py file --profile strict --pipeline ./my_pipeline.yml`.
+Pick a profile with `--profile <name>` or `--profile <path/to/folder>`. Without it you are asked to choose one
+from a list (arrow keys and enter). If there is only one profile it is used without asking; when Censor Tool
+doesn't run in an interactive terminal, the first profile alphabetically is used, with a warning.
+`--config`, `--censor-config` and `--pipeline` replace a single file of the profile, e.g.
+`python main.py file --profile nudity --censor-config ./strict.yml`.
 
-During live and webcam censoring, changes to `config.yml` and `censor_config.yml` are applied as soon as the file
-is saved (press `r` in the window to force a reload). An invalid file is reported and the previous settings are kept.
-`pipeline.yml` is only read at startup.
+To make your own profile, copy one of the included profiles to `configs/<name>/` and edit the files. Profiles
+other than `nudity` and `privacy` are ignored by git, so your own profiles stay out of the repository.
 
-### Pipeline config
+The included profiles:
 
-`pipeline.yml` lists the (YOLO) models that are run. Relative model paths are relative to the working directory
-(run Censor Tool from the project root).
+| Profile | What it censors | Models |
+|---------|-----------------|--------|
+| `nudity` | Nudity and faces | Nevermore big, see [Nudity](#nudity-nudity-profile) |
+| `privacy` | Faces and license plates | License plate and face detection, see [Privacy](#privacy-privacy-profile) |
 
-- `backend`: `python` (default) or `cpp`, see [Backends](#backends).
-- `device`: `cpu`, `cuda` or `cuda:N`. Set it at the top for all models, or per model.
-- `min_confidence`: score floor per model. Detections below it are dropped before anything else,
-  so keep it at or below the lowest `min_probability` in your censor configs.
-- `labels`: renames labels. The segmentation model's `person` is renamed to `BODY`.
-- `imgsz`: input size of a model with a dynamic input size (NudeNet). Larger finds smaller body parts but is slower
-  (`640`, `1280`, `2560`, a multiple of 32). Models with a fixed input size ignore it.
-- `n_workers`: number of worker threads that run the models (default `4`).
-- `max_concurrent_jobs`: maximum number of jobs active at once, limit it to reduce RAM usage (default `128`, `0` = unlimited).
-
-### Backends
-
-Censoring is done by one of two backends with the same features and config files:
-
-| Backend  | Install                               | Notes                                                                 |
-|----------|---------------------------------------|-----------------------------------------------------------------------|
-| `python` | included (`pip install -r requirements.txt`) | The default. Pure Python on top of onnxruntime and OpenCV.     |
-| `cpp`    | build and install `censor_core` 2.0, e.g. `pip install /path/to/PyCensorCore` | Faster, mostly noticeable in live and video censoring. |
-
-Pick one with `backend:` in `pipeline.yml`. If `cpp` is selected but `censor_core` is not installed, Censor Tool
-stops with an error instead of silently switching backends. `python main.py validate` shows which backend is used.
-Results of the two can differ slightly (a pixel here and there), not in what is detected or censored.
-Both can share the cache folder; each keeps its own cache files.
+Both use the Python backend on the CPU; set `backend` and `device` in their `pipeline.yml` to change that.
 
 ### Censor config
 
-`features_to_censor` lists the labels to censor. These are the labels the models in `pipeline.yml` produce:
-the NudeNet labels (`FACE_FEMALE`, `FEMALE_BREAST_EXPOSED`, ...), `BODY` (the full body outline) and
-`EYES_FEMALE`/`EYES_MALE` (eye bars). Unknown labels and misspelled keys are reported as warnings at startup.
+`censor_config.yml` lists the labels to censor and how each one is censored:
 
-Use `clip_to: [BODY]` on a feature to clip its censor area to the body outline.
+```yaml
+features_to_censor: ["face", "female_breast_exposed", "vagina_exposed", "penis_exposed"]
+
+default_censor_config:
+    censor_style: {type: bar, color: [0, 0, 0]}
+    min_probability: 0.25
+
+feature_overrides:
+    face:
+        censor_style: {type: pixel, factor: 20}
+        shape: circle
+```
+
+The labels depend on the models in `pipeline.yml`. All labels, styles, shapes, overlays and other options are
+described in [docs/censor_config.md](docs/censor_config.md).
+
+## Backends
+
+Censoring is done by one of two backends. Both have the same features and read the same config files.
+
+| Backend | Install | Notes |
+|---------|---------|-------|
+| `python` | Included. | The default. Pure Python on top of ONNX Runtime and OpenCV. |
+| `cpp` | Build and install `censor_core` 2.0, e.g. `pip install /path/to/PyCensorCore`. | Faster, mostly noticeable in live and video censoring and on large batches of files. |
+
+Pick one with `backend:` in `pipeline.yml`. If `cpp` is selected but `censor_core` is not installed, Censor Tool
+stops with an error instead of switching backends. `python main.py validate` shows which backend is used.
+
+Results of the two can differ by a pixel here and there, not in what is detected or censored. They share the
+`cache/` folder but each keeps its own cache files, so switching backends detects everything again once.
+
+## Troubleshooting
+
+**The GPU isn't used.** Install `requirements-gpu.txt` (not `requirements.txt`; having both `onnxruntime` and
+`onnxruntime-gpu` installed causes problems, so `pip uninstall onnxruntime` first) and set `device: cuda` in
+`pipeline.yml`. `python main.py validate` reports whether CUDA works. The CUDA and cuDNN versions must match
+[onnxruntime-gpu's requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements).
+
+**"Model ... not found".** The model file isn't at the path in `pipeline.yml`, see [Models](#models). Paths are
+relative to the working directory (normally the project root).
+
+**A label in the censor config is reported as unknown.** The censor config uses a label none of the models in
+`pipeline.yml` produce, for example `BODY` without the segmentation model, or NudeNet labels with Nevermore.
+
+**Videos fail.** Check that `ffmpeg` is installed and on your `PATH` (`ffmpeg -version`).
+
+**The virtual camera doesn't work.** Install a virtual camera driver, see
+[pyvirtualcam](https://github.com/letmaik/pyvirtualcam#supported-virtual-cameras). On Linux, load v4l2loopback
+(`sudo modprobe v4l2loopback`).
+
+**Live censoring is slow.** Use a GPU, the `cpp` backend, or a smaller model (e.g. `det_v11_medium`). Fewer
+labels in `features_to_censor` can also help, as models whose labels aren't needed don't run.
+
+## Development
+
+```
+app/        the modes: file (image, video), live and webcam
+core/       the Python backend: models, detection, censoring, cache
+server/     the HTTP server
+configs/    the profiles
+docs/       config and API reference
+tests/      tests (tests/core: backend tests, run against both backends)
+```
+
+Run the tests with
+
+```
+python -m pytest tests
+```
+
+The backend tests in `tests/core` run against every installed backend, so against `cpp` too when `censor_core` is
+installed. Tests that need a model are skipped when the model is missing from `models/`.

@@ -1,0 +1,62 @@
+# Which backend runs the models, and which models it loads. Override it with --pipeline.
+# Relative model paths are relative to the working directory (normally the project root).
+# All settings are explained in docs/pipeline_config.md.
+#
+# The nudity profile runs one model: Nevermore big (https://huggingface.co/kinkyrvn/nevermore), which finds
+# faces, breasts, genitals, buttocks, feet and people. Body outlines (BODY) and eye bars need extra models,
+# see the commented-out sections at the bottom.
+
+# The implementation that runs the models and censors. Only read at startup.
+#   python: pure Python, works out of the box (default)
+#   cpp:    the C++ censor_core module, noticeably faster (mainly for live and video censoring).
+#           It has to be installed separately, see the README
+# Both give the same results and use the same config files.
+backend: python
+
+# Where the models run: cpu | cuda | cuda:N (e.g. cuda:1 for the second GPU).
+# Applies to every model; a model can override it with its own 'device'.
+device: cpu
+
+# ONNX Runtime CPU threads per model: a number, or auto (default: the CPU models split the cores).
+# Only matters for models on the cpu. Set a number to leave cores free for other programs.
+# threads: auto
+
+# Number of worker threads that run the models. Only read at startup.
+n_workers: 4
+
+# The maximum number of jobs that can be active at any moment. Only read at startup.
+# Limit this to reduce RAM usage.
+# Keep >=n_workers, otherwise the workers have idle time
+# Set to 0 for unlimited jobs.
+max_concurrent_jobs: 128
+
+models:
+  #### Main nudity detection model, runs on every image.
+  #### Other sizes: det_v11_medium (faster) or det_v11_huge (1024x1024, more accurate, slower).
+  #### The _fp16 files are half the size and faster on most GPUs.
+  - name: nevermore
+    path: models/nevermore/det_v11_big/det_v11_big_640.onnx
+    resize: letterbox            # this model has a fixed 640x640 input
+    agnostic_nms: true           # one box per region, across classes
+    nms_iou: 0.75
+    max_det: 0                   # 0 = no limit
+    # Score floor: detections below it are dropped before anything else (and never cached).
+    # Keep it at or below the lowest min_probability in your censor configs.
+    min_confidence: 0.15
+
+  #### Body segmentation (optional): adds the BODY label, for full-body censoring and clip_to: [BODY].
+  #### Only runs when the censor config needs BODY. Any YOLO segmentation model works;
+  #### (n)ano is the fastest, (x) the most accurate. See the README for how to get one.
+  # - name: people
+  #   path: models/yolo/yolo26n-seg.onnx
+  #   resize: stretch
+  #   classes: [person]            # keep only these classes (names or ids)
+  #   labels: {person: BODY}       # rename; labels must be unique across models
+  #   min_confidence: 0.25
+
+#### Eye detection (optional): adds the 'eyes' label (eye bars), runs on every detected face.
+# landmarks:
+#   path: models/eye_detection/pfld.onnx
+#   run_on:                        # face label -> eye label
+#     face: eyes                   # Nevermore has a single face class
+#   min_face_score: 0.15

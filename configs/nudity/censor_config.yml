@@ -1,27 +1,24 @@
 ### Features to censor
-### Put a '#' in front of a line to turn it off.
+### Put a '#' in front of a line to turn it off. All settings are explained in docs/censor_config.md.
+### These are the labels of the Nevermore model (see pipeline.yml).
 features_to_censor: [
-    "ANUS_EXPOSED",
-    "FEMALE_GENITALIA_EXPOSED",
-    "FEMALE_BREAST_EXPOSED",
-    "BUTTOCKS_EXPOSED",
-    "MALE_GENITALIA_EXPOSED",
-    "FACE_FEMALE",
-    "FACE_MALE",
-#    "FEMALE_GENITALIA_COVERED",
-#    "FEMALE_BREAST_COVERED",
-#    "BUTTOCKS_COVERED",
-#    "ANUS_COVERED",
-#    "BELLY_EXPOSED",
-#    "BELLY_COVERED",
-#    "FEET_EXPOSED",
-#    "FEET_COVERED",
-#    "ARMPITS_EXPOSED",
-#    "ARMPITS_COVERED",
-#    "MALE_BREAST_EXPOSED",
-#    "EYES_FEMALE",
-#    "EYES_MALE",
-#    "BODY",      # the full body outline (from the segmentation model in pipeline.yml)
+    "face",
+    "female_breast_exposed",
+    "nipple_exposed",
+    "vagina_exposed",
+    "penis_exposed",
+    "buttocks_exposed",
+#    "female_breast_covered",
+#    "male_breast_exposed",
+#    "male_breast_covered",
+#    "vagina_covered",
+#    "penis_covered",
+#    "buttocks_covered",
+#    "foot_exposed",
+#    "foot_covered",
+#    "person",    # the box around a whole person
+#    "eyes",      # eye bars, needs the landmarks model in pipeline.yml
+#    "BODY",      # the full body outline, needs the body segmentation model in pipeline.yml
 ]
 
 # Merge overlapping borders into one. If the borders have different colors and thickness one is chosen randomly.
@@ -133,7 +130,7 @@ default_censor_config:
 
     # Keep the censor on screen a little longer after the feature is no longer detected.
     # This can help if the model does not detect a feature while it is still on screen.
-    # Only affects 'video' censor and 'live' censor on 'precise' mode.
+    # Only affects video censoring.
     # 0.3 will keep censored area 0.3 seconds longer on screen.
     time_safety: 0.1
 
@@ -143,18 +140,20 @@ default_censor_config:
     # Censor everything else and keep the feature visible
     inverse: false
 
-    # The minimum confidence that the datatypes needs to have that it detected a certain feature before it is censored
+    # The minimum confidence the model needs to have that it detected a certain feature before it is censored
     # Lower values causes pieces of the image to be censored when there is nothing that needs censoring.
     # Higher values causes some features that need to be censored to not be censored.
-    min_probability: 0.45
+    min_probability: 0.25
 
     # the shape of the censor area: default, mask, ellipse, circle, rectangle
     # default: the detection's own shape (the outline for BODY and eyes, the box otherwise)
     # mask: the segmentation outline (only for labels from segmentation models, e.g. BODY)
+    # ellipse, circle, rectangle: fitted around the detection
     shape: default
 
     # Clip the censor area to the outline of one or more segmentation labels.
     # E.g. clip_to: [BODY] intersects the censor box with the shape of the human.
+    # Needs the body segmentation model in pipeline.yml.
     # This can create nicer censors, but only works sometimes as the faster models are not very accurate.
     # clip_to: [BODY]
 
@@ -163,19 +162,15 @@ default_censor_config:
 # Feature Overrides: to override any of the above defaults for a specific feature.
 # If some setting is missing in the override, the default value is used.
 feature_overrides:
-    FACE_FEMALE:
+    face:
         censor_style:
             type: pixel
             factor: 20
 
-    FACE_MALE:
-        censor_style:
-            type: pixel
-            factor: 20
-
-    BODY:
-        # Minimum confidence for a body shape, also when BODY is only used as a clip_to target.
-        min_probability: 0.5
-        censor_style:
-            type: pixel
-            factor: 30
+    # Only used when BODY is enabled (see pipeline.yml).
+    # BODY:
+    #     # Minimum confidence for a body shape, also when BODY is only used as a clip_to target.
+    #     min_probability: 0.5
+    #     censor_style:
+    #         type: pixel
+    #         factor: 30

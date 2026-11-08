@@ -174,14 +174,14 @@ def pipelines(cc, pipeline_config):
 @pytest.fixture(scope="session")
 def example_configs(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
     """
-    The default profile's pipeline.yml and censor_config.yml. The app-only keys (backend, n_workers, ...) are
+    The nudity profile's pipeline.yml and censor_config.yml. The app-only keys (backend, n_workers, ...) are
     removed and model paths resolved against the project root, as app/config.py does.
     """
     import yaml
 
     from app.config import PIPELINE_RUNTIME_KEYS
 
-    profile = PROJECT_ROOT / "configs" / "default"
+    profile = PROJECT_ROOT / "configs" / "nudity"
     spec = yaml.safe_load((profile / "pipeline.yml").read_text())
     for key in PIPELINE_RUNTIME_KEYS:
         spec.pop(key, None)
