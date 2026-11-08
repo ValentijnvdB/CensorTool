@@ -37,6 +37,10 @@ class LiveCensorConfig:
     show_fps: bool = False
     cursor_color: tuple[int, int, int] = (168, 93, 253)
 
+    # optional (may be left out of config.yml)
+    input_size: int = 0         # model input size for live frames, 0 = the size in pipeline.yml
+    frames_in_flight: int = 2   # frames censored at the same time
+
 
 @dataclass
 class Config:
@@ -231,6 +235,7 @@ def read_censor_config_from_file_w_hash(path: Path = None, prev_hash: str = None
 
 _CONFIG_KEYS = ('video_censor_fps', 'comfy_host', 'comfy_port', 'comfy_workflow')
 _LIVE_KEYS = tuple(f.name for f in fields(LiveCensorConfig))
+_OPTIONAL_LIVE_KEYS = ('input_size', 'frames_in_flight')
 
 
 def load_config(path: Path | str) -> Config:
@@ -258,7 +263,7 @@ def load_config(path: Path | str) -> Config:
             logger.warning(f"Unknown key '{key}' in {path} is ignored.")
 
     missing = [k for k in _CONFIG_KEYS if k not in config_dict] + \
-              [f'live_{k}' for k in _LIVE_KEYS if k not in live_dict]
+              [f'live_{k}' for k in _LIVE_KEYS if k not in live_dict and k not in _OPTIONAL_LIVE_KEYS]
     if missing:
         raise ValueError(f"'{path}' is missing: {', '.join(missing)}.")
 
@@ -290,6 +295,10 @@ def validate_config(config: Config):
             raise ValueError(f"live_{name} must be a positive integer, got {getattr(live, name)!r}.")
     if not isinstance(live.show_fps, bool):
         raise ValueError(f"live_show_fps must be true or false, got {live.show_fps!r}.")
+    if not is_int(live.input_size) or live.input_size < 0 or live.input_size % 32 != 0:
+        raise ValueError(f"live_input_size must be 0 or a positive multiple of 32, got {live.input_size!r}.")
+    if not is_int(live.frames_in_flight) or live.frames_in_flight < 1:
+        raise ValueError(f"live_frames_in_flight must be a positive integer, got {live.frames_in_flight!r}.")
 
     color = live.cursor_color
     if not isinstance(color, (list, tuple)) or len(color) != 3 or not all(is_int(c) and 0 <= c <= 255 for c in color):

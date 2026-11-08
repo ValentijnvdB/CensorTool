@@ -8,6 +8,10 @@
 # Applies to every model; a model can override it with its own 'device'.
 device: cpu
 
+# ONNX Runtime CPU threads per model: a number, or auto (default: the CPU models split the cores).
+# Only matters for models on the cpu. Set a number to leave cores free for other programs.
+# threads: auto
+
 # Number of worker threads that run the models. Only read at startup.
 n_workers: 4
 

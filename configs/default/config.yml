@@ -33,6 +33,17 @@ live_show_fps: false
 ### Color for the replacement cursor for live censor, in RGB
 live_cursor_color: [168, 93, 253]
 
+### Model input size for live/webcam frames, a multiple of 32. 0 uses the
+### model's own size (imgsz in pipeline.yml). A smaller size (e.g. 480 or 416)
+### is noticeably faster, mostly on the CPU, but small body parts are found
+### less reliably. Only has effect on models with 'resize: rect'.
+live_input_size: 0
+
+### How many frames are censored at the same time. 2 lets capturing,
+### censoring and displaying overlap (about 1.5-2x the fps on a GPU) at the
+### cost of one frame of extra latency. 1 gives the lowest latency.
+live_frames_in_flight: 2
+
 # Config for the 'ai_remove' censor style.
 # Comfy base url
 comfy_host: "localhost"

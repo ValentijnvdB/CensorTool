@@ -13,6 +13,10 @@ class InputDevice(ABC):
     def get_frame(self) -> tuple[float, np.ndarray]:
         pass
 
+    def close_thread(self):
+        """Release what the calling thread used to capture frames. Called by a capture thread when it stops."""
+        pass
+
     def screen_region(self) -> tuple[int, int, int, int] | None:
         """
         The (left, top, width, height) region of the screen the last frame was captured from,

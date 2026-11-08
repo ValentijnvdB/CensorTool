@@ -1,5 +1,7 @@
+import threading
 import time
 
+import cv2
 import mss
 import numpy as np
 from loguru import logger
@@ -14,18 +16,48 @@ class ScreenshotDevice(InputDevice):
     MAX_GRABS = 3
 
     def __init__(self):
-        self.device = mss.mss()
+        # mss instances must be used in the thread that created them (Windows), and frames are captured in a
+        # background thread in live mode, so each thread gets its own instance (see _sct).
+        self._local = threading.local()
+        self._instances: list = []
+        self._instances_lock = threading.Lock()
         self._prev_grab: np.ndarray | None = None
         self.area: dict[str, int] | None = None
         self._rejected_area: dict[str, int] | None = None
         self._update_area()
         if self.area is None:
-            screen = self.device.monitors[0]
-            self.device.close()
+            screen = self._sct().monitors[0]
+            self.close()
             raise ValueError(f"The live capture region {self._rejected_area} is not within the screen {screen}.")
 
     def close(self):
-        self.device.close()
+        with self._instances_lock:
+            instances, self._instances = self._instances, []
+        for sct in instances:
+            try:
+                sct.close()
+            except Exception as e:
+                logger.debug(f"Closing a screen capture instance failed: {e}")
+
+    def close_thread(self):
+        sct = getattr(self._local, 'sct', None)
+        if sct is None:
+            return
+        self._local.sct = None
+        with self._instances_lock:
+            if sct in self._instances:
+                self._instances.remove(sct)
+        sct.close()
+
+    def _sct(self):
+        """The mss instance of the calling thread."""
+        sct = getattr(self._local, 'sct', None)
+        if sct is None:
+            sct = mss.mss()
+            self._local.sct = sct
+            with self._instances_lock:
+                self._instances.append(sct)
+        return sct
 
     def _update_area(self):
         """
@@ -37,7 +69,7 @@ class ScreenshotDevice(InputDevice):
         if area == self.area or area == self._rejected_area:
             return
 
-        screen = self.device.monitors[0]  # bounding box of all monitors
+        screen = self._sct().monitors[0]  # bounding box of all monitors
         on_screen = (area["left"] >= screen["left"] and area["top"] >= screen["top"]
                      and area["left"] + area["width"] <= screen["left"] + screen["width"]
                      and area["top"] + area["height"] <= screen["top"] + screen["height"])
@@ -54,7 +86,9 @@ class ScreenshotDevice(InputDevice):
         self._rejected_area = None
 
     def _grab(self) -> np.ndarray:
-        return np.array(self.device.grab(self.area), dtype=np.uint8)  # BGRA
+        grab = self._sct().grab(self.area)
+        # a view on the grabbed buffer, much faster than np.array(grab)
+        return np.frombuffer(grab.raw, np.uint8).reshape(grab.height, grab.width, 4)  # BGRA
 
     def get_frame(self) -> tuple[float, np.ndarray]:
         """
@@ -78,7 +112,7 @@ class ScreenshotDevice(InputDevice):
                 break
             frame = confirm
         self._prev_grab = frame
-        return time.monotonic(), frame[:, :, :3].copy()
+        return time.monotonic(), cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
     def screen_region(self) -> tuple[int, int, int, int]:
         return self.area["left"], self.area["top"], self.area["width"], self.area["height"]
