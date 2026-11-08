@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from pathlib import Path
 
@@ -5,7 +7,7 @@ import numpy as np
 
 import constants
 
-import censor_core as cc
+from core.backend import cc
 
 from app.config import make_image_pipeline, read_censor_config_from_file
 from . import utils, server_config
@@ -16,7 +18,7 @@ _video_pipeline: cc.VideoPipeline | None = None
 _debug = False
 
 # Censor config used when a request does not provide one.
-# censor_core 2.0 treats a job without a config as detection-only (nothing is censored).
+# Both backends treat a job without a config as detection-only (nothing is censored).
 _default_censor_config: dict | None = None
 
 
@@ -76,7 +78,7 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
         output_path: Path = constants.data_root / 'server' / 'debug' / (job_id + '.png')
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Without a config censor_core runs every model and censors nothing: fine for detection,
+    # Without a config the backend runs every model and censors nothing: fine for detection,
     # but censoring jobs fall back to the default censor config.
     if censor_config is None and not early_exit:
         censor_config = _default_censor_config

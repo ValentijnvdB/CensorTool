@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import field, dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -5,7 +7,8 @@ from typing import Any
 import yaml
 from loguru import logger
 
-import censor_core as cc
+from core import backend
+from core.backend import BackendError, cc
 
 import constants
 from utils import hash_utils
@@ -16,11 +19,11 @@ CONFIG_FILE = 'config.yml'
 PIPELINE_FILE = 'pipeline.yml'
 CENSOR_CONFIG_FILE = 'censor_config.yml'
 
-# Runtime settings in pipeline.yml. They are not part of censor_core's pipeline format, so they are
-# removed before the file is handed to censor_core and passed as arguments instead.
+# App settings in pipeline.yml. They are not part of the backend's pipeline format, so they are
+# removed before the file is handed to the backend and passed as arguments instead.
 DEFAULT_N_WORKERS = 4
 DEFAULT_MAX_CONCURRENT_JOBS = 128
-PIPELINE_RUNTIME_KEYS = ('n_workers', 'max_concurrent_jobs')
+PIPELINE_RUNTIME_KEYS = ('backend', 'n_workers', 'max_concurrent_jobs')
 
 
 class ProfileError(Exception):
@@ -57,10 +60,11 @@ class Config:
     debug: bool                             = False
 
     # --- from pipeline.yml (only read when a pipeline is created) ---
+    backend: str                            = backend.DEFAULT_BACKEND  # 'python' or 'cpp'
     n_workers: int                          = DEFAULT_N_WORKERS
     max_concurrent_jobs: int                = DEFAULT_MAX_CONCURRENT_JOBS
 
-    # pipeline.yml listing the models censor_core loads (model paths in it are relative to the working dir)
+    # pipeline.yml listing the models the backend loads (model paths in it are relative to the working dir)
     pipeline_path: Path                     = constants.profiles_path / DEFAULT_PROFILE / PIPELINE_FILE
 
 
@@ -148,7 +152,7 @@ def load_pipeline_spec(path: Path | str) -> dict[str, Any]:
 
 def _resolved_pipeline_file(path: Path | str) -> Path:
     """
-    censor_core resolves model paths relative to the pipeline.yml. Write a copy with absolute model paths
+    The backend resolves model paths relative to the pipeline.yml. Write a copy with absolute model paths
     (resolved against the working directory) to the temp dir and return its path.
     """
     spec = load_pipeline_spec(path)
@@ -306,15 +310,20 @@ def validate_config(config: Config):
     live.cursor_color = tuple(color)
 
 
-def load_pipeline_runtime(path: Path | str) -> tuple[int, int]:
+def load_pipeline_runtime(path: Path | str) -> tuple[int, int, str]:
     """
-    Read the runtime settings from a pipeline.yml.
+    Read the app settings from a pipeline.yml.
 
-    :return: (n_workers, max_concurrent_jobs)
+    :return: (n_workers, max_concurrent_jobs, backend)
     :raises ValueError: if a value is not valid.
     """
     with open(path, 'r') as f:
         spec = yaml.safe_load(f) or {}
+
+    try:
+        backend_name = backend.normalize(spec.get('backend'))
+    except BackendError as e:
+        raise ValueError(f"backend in '{path}': {e}") from e
 
     n_workers = spec.get('n_workers', DEFAULT_N_WORKERS)
     max_concurrent_jobs = spec.get('max_concurrent_jobs', DEFAULT_MAX_CONCURRENT_JOBS)
@@ -323,7 +332,7 @@ def load_pipeline_runtime(path: Path | str) -> tuple[int, int]:
         raise ValueError(f"n_workers in '{path}' must be a positive integer, got {n_workers!r}.")
     if not isinstance(max_concurrent_jobs, int) or isinstance(max_concurrent_jobs, bool) or max_concurrent_jobs < 0:
         raise ValueError(f"max_concurrent_jobs in '{path}' must be >= 0, got {max_concurrent_jobs!r}.")
-    return n_workers, max_concurrent_jobs
+    return n_workers, max_concurrent_jobs, backend_name
 
 
 def make_image_pipeline(max_workers: int | None = None, mode: str = 's') -> cc.ImagePipeline:
@@ -390,6 +399,7 @@ def reload_config_if_changed(prev_hash: str) -> tuple[bool, str]:
         return False, new_hash
 
     new.debug = CONFIG.debug
+    new.backend = CONFIG.backend
     new.n_workers = CONFIG.n_workers
     new.max_concurrent_jobs = CONFIG.max_concurrent_jobs
     new.pipeline_path = CONFIG.pipeline_path
@@ -418,9 +428,16 @@ def init_configs(profile: str | Path | None = None,
 
     try:
         config = load_config(config_path)
-        config.n_workers, config.max_concurrent_jobs = load_pipeline_runtime(pipeline_path)
+        config.n_workers, config.max_concurrent_jobs, config.backend = load_pipeline_runtime(pipeline_path)
     except ValueError as e:
         raise ProfileError(str(e)) from e
+
+    # The backend must be chosen before the first pipeline or job is created.
+    try:
+        backend.select(config.backend)
+    except BackendError as e:
+        raise ProfileError(str(e)) from e
+    logger.info(f"Using the '{config.backend}' backend.")
     config.debug = debug
     config.pipeline_path = Path(pipeline_path)
 

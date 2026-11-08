@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -15,7 +17,7 @@ from aiohttp import web
 from loguru import logger
 
 import constants
-import censor_core as cc
+from core.backend import cc
 
 from . import request_reader as rr
 from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import time
 import traceback
 from collections import deque
@@ -9,7 +11,7 @@ import numpy as np
 import pyautogui
 from loguru import logger
 
-import censor_core as cc
+from core.backend import cc
 
 from .input_devices.generic import InputDevice
 from .output_devices.generic import OutputDevice

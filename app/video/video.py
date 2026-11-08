@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +10,7 @@ from loguru import logger
 import constants
 from ..config import *
 
-import censor_core as cc
+from core.backend import cc
 
 
 def censor_videos(

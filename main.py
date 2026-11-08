@@ -175,7 +175,7 @@ def main():
     parser.add_argument('-cc', '--censor-config', default=None,
                         help="Path to the censor config file. Overrides the profile's one.")
     parser.add_argument('-pl', '--pipeline', default=None,
-                        help="Path to the pipeline config file (which models censor_core loads). "
+                        help="Path to the pipeline config file (the backend and the models it loads). "
                              "Overrides the profile's one.")
 
     # live & webcam mode

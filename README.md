@@ -48,6 +48,8 @@ Then set `device: cuda` in `configs/<profile>/pipeline.yml`.
    # For GPU support (make sure your GPU is supported by onnxruntime before you install)
    pip install -r requirements-gpu.txt
    ```
+   Optional: install the faster C++ backend (`censor_core`) and set `backend: cpp` in
+   `configs/<profile>/pipeline.yml`, see [Backends](#backends). Without it the Python backend is used.
 5. Run the init process. This will create all required directories.
     ```
     python main.py init
@@ -154,6 +156,7 @@ is saved (press `r` in the window to force a reload). An invalid file is reporte
 `pipeline.yml` lists the (YOLO) models that are run. Relative model paths are relative to the working directory
 (run Censor Tool from the project root).
 
+- `backend`: `python` (default) or `cpp`, see [Backends](#backends).
 - `device`: `cpu`, `cuda` or `cuda:N`. Set it at the top for all models, or per model.
 - `min_confidence`: score floor per model. Detections below it are dropped before anything else,
   so keep it at or below the lowest `min_probability` in your censor configs.
@@ -162,6 +165,20 @@ is saved (press `r` in the window to force a reload). An invalid file is reporte
   (`640`, `1280`, `2560`, a multiple of 32). Models with a fixed input size ignore it.
 - `n_workers`: number of worker threads that run the models (default `4`).
 - `max_concurrent_jobs`: maximum number of jobs active at once, limit it to reduce RAM usage (default `128`, `0` = unlimited).
+
+### Backends
+
+Censoring is done by one of two backends with the same features and config files:
+
+| Backend  | Install                               | Notes                                                                 |
+|----------|---------------------------------------|-----------------------------------------------------------------------|
+| `python` | included (`pip install -r requirements.txt`) | The default. Pure Python on top of onnxruntime and OpenCV.     |
+| `cpp`    | build and install `censor_core` 2.0, e.g. `pip install /path/to/PyCensorCore` | Faster, mostly noticeable in live and video censoring. |
+
+Pick one with `backend:` in `pipeline.yml`. If `cpp` is selected but `censor_core` is not installed, Censor Tool
+stops with an error instead of silently switching backends. `python main.py validate` shows which backend is used.
+Results of the two can differ slightly (a pixel here and there), not in what is detected or censored.
+Both can share the cache folder; each keeps its own cache files.
 
 ### Censor config
 

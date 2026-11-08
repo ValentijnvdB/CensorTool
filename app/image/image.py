@@ -1,4 +1,6 @@
-import censor_core as cc
+from __future__ import annotations
+
+from core.backend import cc
 
 import yaml
 from tqdm import tqdm

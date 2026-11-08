@@ -1,8 +1,15 @@
-# Which models censor_core loads. Override it with --pipeline.
+# Which backend runs the models, and which models it loads. Override it with --pipeline.
 # Relative model paths are relative to the working directory (normally the project root).
 #
 # NudeNet for body parts, a COCO segmentation model for people (as BODY, used
 # for full-body censoring and clip_to) and the PFLD landmark model for eye bars.
+
+# The implementation that runs the models and censors. Only read at startup.
+#   python: pure Python, works out of the box (default)
+#   cpp:    the C++ censor_core module, noticeably faster (mainly for live and video censoring).
+#           It has to be installed separately, see the README.0
+# Both give the same results and use the same config files.
+backend: python
 
 # Where the models run: cpu | cuda | cuda:N (e.g. cuda:1 for the second GPU).
 # Applies to every model; a model can override it with its own 'device'.

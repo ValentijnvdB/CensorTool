@@ -23,6 +23,9 @@ def validate_install():
         validated['config'] = True
 
     ########################## PIPELINE ##########################
+    from core import backend
+    logger.info(f"Backend: '{CONFIG.backend}' (python always available, "
+                f"cpp {'installed' if backend.is_available('cpp') else 'not installed'}).")
     success, msg = validate_pipeline(CONFIG.pipeline_path, 'cpu')
     if success:
         logger.info(f"Pipeline ({CONFIG.pipeline_path}) on CPU validated successfully: {msg}")
@@ -90,8 +93,15 @@ def validate_pipeline(pipeline_path: Path, device: str) -> tuple[bool, str]:
     and run a detection-only job on a small image.
     """
     try:
-        import censor_core as cc
+        from core import backend
+        from core.backend import cc
         from app.config import load_pipeline_spec
+
+        if device != 'cpu' and backend.name() == 'python':
+            # The python backend falls back to the CPU without CUDA; don't report that as a working GPU.
+            import onnxruntime as ort
+            if 'CUDAExecutionProvider' not in ort.get_available_providers():
+                return False, "onnxruntime has no CUDA support (install onnxruntime-gpu)."
 
         pipeline_path = Path(pipeline_path)
         if not pipeline_path.exists():
