@@ -20,6 +20,12 @@ class Shape(Enum):
 Color = tuple[int, int, int]  # BGR
 
 
+# Defaults for settings a censor config leaves out (documented in docs/censor_config.md).
+DEFAULT_BLUR_STRENGTH = 31   # also the fallback style for a missing or unknown type, and the inverse censor style
+DEFAULT_PIXEL_FACTOR = 20
+DEFAULT_AREA_SAFETY = 0.1    # width_area_safety and height_area_safety
+
+
 # -------------------------------- Censor styles --------------------------------
 @dataclass(frozen=True)
 class CsBlur:
@@ -145,8 +151,8 @@ def _parse_shape(value: Any) -> Shape:
 
 def _parse_censor_style(d: Any, where: str) -> CensorStyle:
     if not isinstance(d, dict) or 'type' not in d:
-        log_warning("Missing censor_style type, defaulting to blur(15).")
-        return CsBlur(15)
+        log_warning(f"Missing censor_style type, defaulting to blur({DEFAULT_BLUR_STRENGTH}).")
+        return CsBlur(DEFAULT_BLUR_STRENGTH)
 
     kind = str(d['type'])
     here = f"{where} (type '{kind}')"
@@ -161,9 +167,9 @@ def _parse_censor_style(d: Any, where: str) -> CensorStyle:
         warn_unknown_keys(d, known[kind], here)
 
     if kind == 'blur':
-        return CsBlur(int(d.get('strength', 15)))
+        return CsBlur(int(d.get('strength', DEFAULT_BLUR_STRENGTH)))
     if kind == 'pixel':
-        return CsPixel(int(d.get('factor', 10)))
+        return CsPixel(int(d.get('factor', DEFAULT_PIXEL_FACTOR)))
     if kind == 'bar':
         return CsBar(_parse_color(d.get('color', [])))
     if kind == 'ai_remove':
@@ -173,8 +179,8 @@ def _parse_censor_style(d: Any, where: str) -> CensorStyle:
     if kind == 'debug':
         return CsDebug(_parse_color(d.get('color', [])))
 
-    log_warning(f"Unknown censor_style type '{kind}', defaulting to blur(15).")
-    return CsBlur(15)
+    log_warning(f"Unknown censor_style type '{kind}', defaulting to blur({DEFAULT_BLUR_STRENGTH}).")
+    return CsBlur(DEFAULT_BLUR_STRENGTH)
 
 
 def _parse_overlay(d: Any, where: str) -> Optional[Overlay]:
@@ -235,8 +241,8 @@ def _parse_censor_box(d: Any, where: str) -> CensorBox:
         overlay=_parse_overlay(d['overlay'], f"{where}.overlay") if 'overlay' in d else None,
         shape=_parse_shape(d.get('shape', 'DEFAULT')),
         border=_parse_border(d['border'], f"{where}.border") if 'border' in d else None,
-        width_area_safety=float(d.get('width_area_safety', 0.0)),
-        height_area_safety=float(d.get('height_area_safety', 0.0)),
+        width_area_safety=float(d.get('width_area_safety', DEFAULT_AREA_SAFETY)),
+        height_area_safety=float(d.get('height_area_safety', DEFAULT_AREA_SAFETY)),
         time_safety=float(d.get('time_safety', 0.0)),
         min_probability=float(d.get('min_probability', 0.5)),
         inverse=bool(d.get('inverse', False)),
@@ -293,15 +299,15 @@ def censor_config_from_dict(root: Any) -> CensorConfig:
         else:
             features[name] = replace(default_box, clip_to=list(default_box.clip_to))
 
-    inverse_style: Union[CsBlur, CsPixel, CsBar] = CsBlur(31)
+    inverse_style: Union[CsBlur, CsPixel, CsBar] = CsBlur(DEFAULT_BLUR_STRENGTH)
     if 'inverse_censor_style' in root:
         parsed = _parse_censor_style(root['inverse_censor_style'], "inverse_censor_style")
         if isinstance(parsed, (CsBlur, CsPixel, CsBar)):
             inverse_style = parsed
         else:
-            log_warning("inverse_censor_style must be blur, pixel, or bar. Defaulting to blur.")
+            log_warning(f"inverse_censor_style must be blur, pixel, or bar. Defaulting to blur({DEFAULT_BLUR_STRENGTH}).")
     else:
-        log_warning("Missing key 'inverse_censor_style', defaulting to blur(31).")
+        log_warning(f"Missing key 'inverse_censor_style', defaulting to blur({DEFAULT_BLUR_STRENGTH}).")
 
     # Score threshold for each clip_to target: its own min_probability when it is
     # censored or overridden, otherwise the default.

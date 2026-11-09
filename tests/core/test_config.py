@@ -36,3 +36,27 @@ def test_load_censor_config_returns_usable_dict(cc, tmp_path) -> None:
     assert cfg["features_to_censor"] == ["FACE_MALE"]
     assert cfg["default_censor_config"]["min_probability"] == 0.4
     cc.Job(config=cfg)  # accepted as-is
+
+
+def test_python_backend_defaults() -> None:
+    """The defaults in docs/censor_config.md (python backend only; the C++ backend has its own)."""
+    from core.censor_config import CsBlur, CsPixel, censor_config_from_dict
+
+    cfg = censor_config_from_dict({
+        "features_to_censor": ["FACE_MALE", "FACE_FEMALE", "EYES", "FEET", "ARMPITS"],
+        "default_censor_config": {"censor_style": {"type": "blur"}},
+        "feature_overrides": {
+            "FACE_FEMALE": {"censor_style": {"type": "pixel"}},
+            "EYES": {"censor_style": {"type": "no_such_style"}},
+            "FEET": {"censor_style": {}},
+            "ARMPITS": {"width_area_safety": 0.3},
+        },
+    })
+    boxes = cfg.features_to_censor
+    assert boxes["FACE_MALE"].style == CsBlur(31)
+    assert boxes["FACE_FEMALE"].style == CsPixel(20)
+    assert boxes["EYES"].style == CsBlur(31)      # unknown type
+    assert boxes["FEET"].style == CsBlur(31)      # missing type
+    assert cfg.inverse_censor_style == CsBlur(31)  # missing inverse_censor_style
+    assert (boxes["FACE_MALE"].width_area_safety, boxes["FACE_MALE"].height_area_safety) == (0.1, 0.1)
+    assert (boxes["ARMPITS"].width_area_safety, boxes["ARMPITS"].height_area_safety) == (0.3, 0.1)

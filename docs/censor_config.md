@@ -82,8 +82,8 @@ A censor box describes how one feature is censored. `default_censor_config` must
 | `censor_style`       | -         | How the area is hidden, see [Censor styles](#censor-styles). Required in the default. |
 | `min_probability`    | `0.5`     | Minimum score a detection needs to be censored. Lower censors more (including things that aren't there), higher misses more. It can't go below the model's `min_confidence` in `pipeline.yml`. |
 | `shape`              | `default` | The shape of the censored area, see [Shapes](#shapes). |
-| `width_area_safety`  | `0.0`     | Extra width, as a fraction: `0.1` makes the area 10% wider. |
-| `height_area_safety` | `0.0`     | Extra height, as a fraction. |
+| `width_area_safety`  | `0.1`     | Extra width, as a fraction: `0.1` makes the area 10% wider. |
+| `height_area_safety` | `0.1`     | Extra height, as a fraction. |
 | `time_safety`        | `0.0`     | Videos only: keep the censor on screen this many seconds after the feature was last detected. Covers frames the model misses and the frames between analysed frames (`video_censor_fps` in [config.yml](config.md)). |
 | `border`             | `null`    | A colored outline around the area: `{color: [R, G, B], thickness: <int>}`. |
 | `overlay`            | `null`    | Text or a sticker on top of the area, see [Overlays](#overlays). |
@@ -101,8 +101,8 @@ censor_style:
 | Type        | Settings                    | Description |
 |-------------|-----------------------------|-------------|
 | `bar`       | `color: [R, G, B]`          | A solid color. |
-| `blur`      | `strength: <int>` (15)      | Blurs the area; higher is stronger. |
-| `pixel`     | `factor: <int>` (10)        | Pixelates the area. `10` turns a 200x400 region into 20x40 blocks. |
+| `blur`      | `strength: <int>` (31)      | Blurs the area; higher is stronger. |
+| `pixel`     | `factor: <int>` (20)        | Pixelates the area. `20` turns a 200x400 region into 10x20 blocks. |
 | `ai_remove` | -                           | Inpaints the area with a ComfyUI workflow (e.g. to add clothing). Needs a running ComfyUI server and workflow, set in [config.yml](config.md#ai_remove-comfyui). Slow. |
 | `debug`     | `color: [R, G, B]`          | Draws the outline, label and score instead of censoring. For tuning configs. |
 
