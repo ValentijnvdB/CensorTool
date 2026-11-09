@@ -10,7 +10,7 @@ import constants
 
 from core.backend import cc
 
-from app.config import current_profile, make_image_pipeline, read_censor_config_from_file
+from app.config import COMFY_KEYS, current_profile, make_image_pipeline, read_censor_config_from_file
 from . import utils, server_config
 
 # censoring pipelines, created by start_pipeline()
@@ -39,11 +39,6 @@ def get_labels() -> dict[str, str]:
     return _image_pipeline.labels
 
 
-# Keys added to ai_remove censor styles from config.yml. They are server settings (host, local path),
-# so they are left out of the censor config the server hands out.
-_PRIVATE_STYLE_KEYS = ('comfy_host', 'comfy_port', 'comfy_workflow')
-
-
 def get_default_censor_config() -> dict:
     """
     The censor config used when a request does not provide one, as read from the profile's censor_config.yml
@@ -56,8 +51,13 @@ def get_default_censor_config() -> dict:
 
     def strip(style):
         if isinstance(style, dict):
-            for key in _PRIVATE_STYLE_KEYS:
+            for key in COMFY_KEYS:  # server settings (host, local path), not handed out
                 style.pop(key, None)
+
+    # an absolute path after restrict_sticker_paths; show it relative to the project, as it is written in a config
+    stickers_dir = config.get('stickers_dir')
+    if stickers_dir is not None and Path(stickers_dir).is_relative_to(constants.project_root_dir):
+        config['stickers_dir'] = Path(stickers_dir).relative_to(constants.project_root_dir).as_posix()
 
     strip((config.get('default_censor_config') or {}).get('censor_style'))
     strip(config.get('inverse_censor_style'))

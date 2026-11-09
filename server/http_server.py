@@ -19,6 +19,8 @@ from loguru import logger
 import constants
 from core.backend import cc
 
+from app.config import CensorConfigError, check_client_censor_config
+
 from . import request_reader as rr
 from .helpers import get_default_censor_config, get_labels, get_profile, submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
     submit_video_job
@@ -60,9 +62,17 @@ async def censor_image(request):
                                   image_path=output_path,
                                   name=image_path.name)
 
+    except CensorConfigError as e:
+        return web.json_response({'error': str(e)}, status=400)
+
     except Exception as e:
         logger.error(f"Error censoring image: {e}. Stacktrace: {traceback.format_exc()}")
         return web.json_response({'error': str(e)}, status=500)
+
+
+def is_plain_filename(name: str) -> bool:
+    """Whether name is just a file name: no folders (so no '..' or absolute paths), and not '.' or '..'."""
+    return bool(name) and name not in ('.', '..') and '/' not in name and '\\' not in name and '\0' not in name
 
 
 async def censor_video(request):
@@ -77,9 +87,14 @@ async def censor_video(request):
         part = await reader.next()
         if part is None: break
         if part.name == 'config':
-            config = json.loads(await part.text())
+            try:
+                config = check_client_censor_config(json.loads(await part.text()))
+            except CensorConfigError as e:
+                return web.json_response({'error': str(e)}, status=400)
         elif part.name == 'filename':
             filename = await part.text()
+            if not is_plain_filename(filename):
+                return web.json_response({'error': f"Invalid filename '{filename}'."}, status=400)
         elif part.name == 'video':
             path = UPLOAD_DIR / filename
             async with aiofiles.open(path, mode='wb') as f:
@@ -249,6 +264,9 @@ async def detect_features(request):
             'detections': detections,
             'cached_models': list(result.result.get('cached_models', [])),
         })
+
+    except CensorConfigError as e:
+        return web.json_response({'error': str(e)}, status=400)
 
     except Exception as e:
         logger.error(f"Error detecting features: {e}")

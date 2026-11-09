@@ -493,3 +493,79 @@ class TestGetDefaultCensorConfig:
         with patch.object(helpers, "_default_censor_config", None):
             with pytest.raises(RuntimeError, match="not been started"):
                 helpers.get_default_censor_config()
+
+
+# ---------------------------------------------------------------------------
+# rejected censor configs
+# ---------------------------------------------------------------------------
+
+class TestRejectedCensorConfig:
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("handler", ["censor_image", "detect_features"])
+    async def test_returns_400(self, fake_request, handler):
+        import server.http_server as hs
+        from app.config import CensorConfigError
+
+        with patch("server.http_server.rr.read_request",
+                   AsyncMock(side_effect=CensorConfigError("stickers_dir '/etc' is not allowed"))):
+            response = await getattr(hs, handler)(fake_request)
+
+        assert response.status == 400
+        assert "not allowed" in json.loads(response.body)["error"]
+
+    @pytest.mark.asyncio
+    async def test_censor_video_returns_400(self):
+        from server.http_server import censor_video
+
+        part = MagicMock()
+        part.name = "config"
+        part.text = AsyncMock(return_value=json.dumps({"stickers_dir": "/etc"}))
+        reader = MagicMock()
+        reader.next = AsyncMock(side_effect=[part, None])
+        request = MagicMock()
+        request.multipart = AsyncMock(return_value=reader)
+
+        with patch("server.http_server.submit_video_job") as submit:
+            response = await censor_video(request)
+
+        assert response.status == 400
+        submit.assert_not_called()
+
+
+class TestDefaultCensorConfigStickersDir:
+
+    def test_stickers_dir_is_shown_relative_to_the_project(self):
+        import constants
+        from server import helpers
+
+        stored = {"stickers_dir": str(constants.project_root_dir / "data" / "stickers" / "plants")}
+        with patch.object(helpers, "_default_censor_config", stored):
+            assert helpers.get_default_censor_config()["stickers_dir"] == "data/stickers/plants"
+
+
+class TestCensorVideoFilename:
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("filename", ["../evil.mp4", "..", ".", "", "/etc/evil.mp4", "a/b.mp4", "..\\evil.mp4"])
+    async def test_rejects_filenames_with_folders(self, filename):
+        from server.http_server import censor_video
+
+        part = MagicMock()
+        part.name = "filename"
+        part.text = AsyncMock(return_value=filename)
+        reader = MagicMock()
+        reader.next = AsyncMock(side_effect=[part, None])
+        request = MagicMock()
+        request.multipart = AsyncMock(return_value=reader)
+
+        with patch("server.http_server.submit_video_job") as submit:
+            response = await censor_video(request)
+
+        assert response.status == 400
+        submit.assert_not_called()
+
+    @pytest.mark.parametrize("filename", ["video.mp4", "my video..mp4", ".hidden.mp4"])
+    def test_plain_filenames_are_allowed(self, filename):
+        from server.http_server import is_plain_filename
+        assert is_plain_filename(filename)

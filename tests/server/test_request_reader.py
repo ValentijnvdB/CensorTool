@@ -425,7 +425,7 @@ class TestReadRequest:
         assert censor_config is None
 
     @pytest.mark.asyncio
-    async def test_censor_config_parsed_when_present(self, valid_extensions, tmp_path):
+    async def test_censor_config_is_checked(self, valid_extensions, tmp_path):
         from server.request_reader import read_request
 
         payload = {
@@ -442,10 +442,10 @@ class TestReadRequest:
         fake_config = MagicMock()
         with patch("server.request_reader.constants.IMAGE_EXT", valid_extensions):
             with patch("server.request_reader.UPLOAD_DIR", tmp_path):
-                with patch("server.request_reader.construct_censor_config", return_value=fake_config) as mock_cc:
+                with patch("server.request_reader.check_client_censor_config", return_value=fake_config) as mock_rs:
                     _, _, censor_config, _ = await read_request(request)
 
-        mock_cc.assert_called_once_with({"threshold": 0.5})
+        mock_rs.assert_called_once_with({"threshold": 0.5})
         assert censor_config is fake_config
 
     @pytest.mark.asyncio

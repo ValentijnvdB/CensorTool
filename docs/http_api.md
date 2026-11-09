@@ -25,7 +25,10 @@ config use the profile's `censor_config.yml`.
 | `/censored/<name>`                      | GET             | Censored images saved with `expected_response: url`. |
 | `/assets/<name>`                        | GET             | Static assets (status images).                  |
 
-Errors are returned with status `500` and a JSON body `{"error": "<message>"}`.
+Errors are returned with status `500` and a JSON body `{"error": "<message>"}`. A `config` that is not allowed
+(a `stickers_dir` or sticker category outside `data/stickers`) is rejected with status `400`. In a `config` sent
+with a request, the ComfyUI settings of `ai_remove` styles (`comfy_host`, `comfy_port`, `comfy_workflow`) are always
+replaced by the ones in `config.yml`.
 
 ## Image requests
 
@@ -122,7 +125,7 @@ A `multipart/form-data` request with these parts:
 
 | Part       | Required | Description                                       |
 |------------|----------|---------------------------------------------------|
-| `filename` | no       | Name of the video, e.g. `clip.mp4`. Send it before the `video` part. Default `video.mp4`. |
+| `filename` | no       | Name of the video, e.g. `clip.mp4`, without folders (`400` otherwise). Send it before the `video` part. Default `video.mp4`. |
 | `video`    | yes      | The video file.                                   |
 | `config`   | no       | A censor config as JSON text.                     |
 
@@ -188,6 +191,7 @@ sent back as `config` in a request.
 }
 ```
 
+- `stickers_dir` is always included, relative to the project folder (`data/stickers` when the file leaves it out).
 - The file is read once, when the server starts. Changes to it take effect after a restart.
 - The ComfyUI settings (`comfy_host`, `comfy_port`, `comfy_workflow`) are left out of `ai_remove` censor styles.
-  A config with `ai_remove` sent back in a request needs them added again.
+  They are not needed when the config is sent back: the server always uses its own.

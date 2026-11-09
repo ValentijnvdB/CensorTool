@@ -29,6 +29,10 @@ class ProfileError(Exception):
     """Raised when a profile or one of its config files cannot be found."""
 
 
+class CensorConfigError(ValueError):
+    """Raised when a censor config is not allowed, such as a stickers path outside data/stickers."""
+
+
 @dataclass
 class LiveCensorConfig:
     cap_top: int = 0
@@ -169,6 +173,100 @@ def _resolved_pipeline_file(path: Path | str) -> Path:
     return out
 
 
+def _inside_stickers_root(path: Path) -> bool:
+    return path.resolve().is_relative_to(constants.stickers_root_path.resolve())
+
+
+def restrict_sticker_paths(config: Any) -> Any:
+    """
+    Make sure stickers are only read from data/stickers and its subfolders.
+
+    stickers_dir may be left out (data/stickers is used), or be data/stickers or one of its subfolders. A relative
+    stickers_dir is relative to the project directory, not the working directory. Sticker overlay categories must
+    stay inside stickers_dir.
+
+    stickers_dir is replaced by its absolute path, so the backend finds it whatever the working directory is.
+    The config is changed in place and returned. Anything that is not a mapping is returned unchanged
+    (the backend reports it).
+
+    :raises CensorConfigError: if stickers_dir or a category points outside data/stickers.
+    """
+    if not isinstance(config, dict):
+        return config
+
+    stickers_dir = config.get('stickers_dir')
+    if stickers_dir is None:
+        resolved = constants.stickers_root_path.resolve()
+    else:
+        resolved = (constants.project_root_dir / str(stickers_dir)).resolve()
+        if not _inside_stickers_root(resolved):
+            raise CensorConfigError(f"stickers_dir '{stickers_dir}' is not allowed, "
+                                    f"it must be data/stickers or one of its subfolders.")
+    config['stickers_dir'] = str(resolved)
+
+    boxes = [('default_censor_config', config.get('default_censor_config'))]
+    overrides = config.get('feature_overrides')
+    if isinstance(overrides, dict):
+        boxes += [(f'feature_overrides.{name}', box) for name, box in overrides.items()]
+
+    for where, box in boxes:
+        overlay = box.get('overlay') if isinstance(box, dict) else None
+        categories = overlay.get('categories') if isinstance(overlay, dict) else None
+        if not isinstance(categories, list):
+            continue
+        for category in categories:
+            if not _inside_stickers_root(resolved / str(category)):
+                raise CensorConfigError(f"Sticker category '{category}' in {where} is not allowed, "
+                                        f"it must be a subfolder of the stickers folder.")
+    return config
+
+
+# ComfyUI settings of an ai_remove censor style. They always come from config.yml.
+COMFY_KEYS = ('comfy_host', 'comfy_port', 'comfy_workflow')
+
+
+def _censor_styles(config: dict) -> list[dict]:
+    """The censor_style dicts of the default censor box and the feature overrides."""
+    boxes = [config.get('default_censor_config')]
+    overrides = config.get('feature_overrides')
+    if isinstance(overrides, dict):
+        boxes += list(overrides.values())
+    styles = [box.get('censor_style') for box in boxes if isinstance(box, dict)]
+    return [style for style in styles if isinstance(style, dict)]
+
+
+def apply_comfy_settings(config: Any, override: bool) -> Any:
+    """
+    Fill in the ComfyUI settings from config.yml in every ai_remove censor style.
+
+    :param override: replace settings the censor config has (for configs from a client, which may not choose
+                     which host the server connects to or which local file it reads), or only fill in missing ones.
+
+    The config is changed in place and returned. Anything that is not a mapping is returned unchanged.
+    """
+    if not isinstance(config, dict):
+        return config
+    values = {'comfy_host': CONFIG.comfy_host, 'comfy_port': CONFIG.comfy_port,
+              'comfy_workflow': str(CONFIG.comfy_workflow)}
+    for style in _censor_styles(config):
+        if style.get('type') != 'ai_remove':
+            continue
+        for key in COMFY_KEYS:
+            if override or key not in style:
+                style[key] = values[key]
+    return config
+
+
+def check_client_censor_config(config: Any) -> Any:
+    """
+    Make a censor config received from a client safe to use: stickers only from data/stickers, and the ComfyUI
+    settings always from config.yml.
+
+    :raises CensorConfigError: if the config is not allowed.
+    """
+    return apply_comfy_settings(restrict_sticker_paths(config), override=True)
+
+
 def read_censor_config_from_file(path: Path | str | None = None) -> dict[str, Any]:
     """
     Read and construct a CensorConfig object from a YAML file.
@@ -185,31 +283,14 @@ def read_censor_config_from_file(path: Path | str | None = None) -> dict[str, An
 
     logger.info(f"Loaded default censor censor_config from {path}.")
 
-    # add the comfy url and workflow if they are not present
-    default_censor_style = default_config['default_censor_config']['censor_style']
-    if default_censor_style['type'] == 'ai_remove':
-        if 'comfy_host' not in default_censor_style:
-            default_censor_style['comfy_host'] = CONFIG.comfy_host
-        if 'comfy_port' not in default_censor_style:
-            default_censor_style['comfy_port'] = CONFIG.comfy_port
-        if 'comfy_workflow' not in default_censor_style:
-            default_censor_style['comfy_workflow'] = CONFIG.comfy_workflow
+    if isinstance(default_config, dict) and default_config.get('feature_overrides', {}) is None:
+        default_config['feature_overrides'] = {}
+    apply_comfy_settings(default_config, override=False)
 
-    if 'feature_overrides' in default_config:
-        if default_config['feature_overrides'] is None:
-            default_config['feature_overrides'] = {}
-
-        for feature, censor_box in default_config['feature_overrides'].items():
-            style = (censor_box or {}).get('censor_style')
-            if style is not None and style.get('type') == 'ai_remove':
-                if 'comfy_host' not in style:
-                    style['comfy_host'] = CONFIG.comfy_host
-                if 'comfy_port' not in style:
-                    style['comfy_port'] = CONFIG.comfy_port
-                if 'comfy_workflow' not in style:
-                    style['comfy_workflow'] = CONFIG.comfy_workflow
-
-    return default_config
+    try:
+        return restrict_sticker_paths(default_config)
+    except CensorConfigError as e:
+        raise CensorConfigError(f"{path}: {e}") from None
 
 
 def read_censor_config_from_file_w_hash(path: Path = None, prev_hash: str = None) -> tuple[bool, dict[str, Any]|None, str]:

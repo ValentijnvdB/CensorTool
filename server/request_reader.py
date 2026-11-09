@@ -9,6 +9,7 @@ from loguru import logger
 import constants
 from utils.hash_utils import hash_bytes
 
+from app.config import check_client_censor_config
 from server.server_config import UPLOAD_DIR
 
 
@@ -112,7 +113,7 @@ async def read_request(request) -> tuple[bytes, Path, dict|None, str]:
 
         censor_config = None
         if 'config' in as_json:
-            censor_config = as_json['config']
+            censor_config = check_client_censor_config(as_json['config'])
             logger.debug(censor_config)
             # censor_config = construct_censor_config(censor_config)
 
