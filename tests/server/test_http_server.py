@@ -572,6 +572,81 @@ class TestCensorVideoFilename:
         assert is_plain_filename(filename)
 
 
+class TestCensorVideoFormat:
+
+    @staticmethod
+    def _request(parts):
+        reader = MagicMock()
+        reader.next = AsyncMock(side_effect=[*parts, None])
+        request = MagicMock()
+        request.multipart = AsyncMock(return_value=reader)
+        return request
+
+    @staticmethod
+    def _text_part(name, text):
+        part = MagicMock()
+        part.name = name
+        part.text = AsyncMock(return_value=text)
+        return part
+
+    @pytest.mark.parametrize("text, expected", [("webm", "webm"), (".WebM", "webm"), (" mov ", "mov"), ("gif", "gif")])
+    def test_parse_format(self, text, expected):
+        from server.http_server import parse_video_format
+        assert parse_video_format(text) == expected
+
+    @pytest.mark.parametrize("text", ["", "exe", "mp4/../x", "flv"])
+    def test_parse_rejects_unsupported(self, text):
+        from server.http_server import parse_video_format
+        with pytest.raises(ValueError, match="Unsupported format"):
+            parse_video_format(text)
+
+    @pytest.mark.parametrize("filename, requested, expected", [
+        ("clip.mp4", None, "mp4"),
+        ("clip.WEBM", None, "webm"),
+        ("clip.mkv", "mp4", "mp4"),
+        ("clip.flv", None, "mp4"),
+        ("clip", None, "mp4"),
+    ])
+    def test_output_format(self, filename, requested, expected):
+        from server.http_server import output_video_format
+        assert output_video_format(filename, requested) == expected
+
+    @pytest.mark.asyncio
+    async def test_unsupported_format_returns_400(self):
+        from server.http_server import censor_video
+
+        request = self._request([self._text_part("format", "exe")])
+        with patch("server.http_server.submit_video_job") as submit:
+            response = await censor_video(request)
+
+        assert response.status == 400
+        submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("parts, output_name, content_type", [
+        ([("filename", "clip.mkv")], "clip.mkv", "video/x-matroska"),
+        ([("filename", "clip.mkv"), ("format", "webm")], "clip.webm", "video/webm"),
+        ([("format", "gif")], "video.gif", "image/gif"),
+        ([], "video.mp4", "video/mp4"),
+    ])
+    async def test_output_path_and_content_type(self, tmp_path, parts, output_name, content_type):
+        import server.http_server as hs
+
+        output = tmp_path / output_name
+        output.write_bytes(b"data")
+        result = MagicMock(success=True, result=output)
+        request = self._request([self._text_part(name, text) for name, text in parts])
+
+        with patch.object(hs, "submit_video_job", AsyncMock(return_value=result)) as submit, \
+                patch.object(hs.web, "StreamResponse") as stream_response:
+            stream_response.return_value.prepare = AsyncMock()
+            stream_response.return_value.write = AsyncMock()
+            await hs.censor_video(request)
+
+        assert submit.call_args.kwargs["output_path"] == hs.CENSORED_PATH / output_name
+        assert stream_response.call_args.kwargs["headers"]["Content-Type"] == content_type
+
+
 # ---------------------------------------------------------------------------
 # censor_frame: config messages
 # ---------------------------------------------------------------------------

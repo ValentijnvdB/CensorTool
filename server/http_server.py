@@ -76,10 +76,44 @@ def is_plain_filename(name: str) -> bool:
     return bool(name) and name not in ('.', '..') and '/' not in name and '\\' not in name and '\0' not in name
 
 
+VIDEO_FORMATS = {
+    'mp4': 'video/mp4',
+    'm4v': 'video/mp4',
+    'mov': 'video/quicktime',
+    'mkv': 'video/x-matroska',
+    'webm': 'video/webm',
+    'avi': 'video/x-msvideo',
+    'gif': 'image/gif',
+}
+"""Formats /censor_video can return, with their Content-Type."""
+DEFAULT_VIDEO_FORMAT = 'mp4'
+
+
+def parse_video_format(text: str) -> str:
+    """
+    The format asked for in the 'format' part of /censor_video, e.g. 'webm' or '.WebM' -> 'webm'.
+
+    :raises ValueError: if the format is not supported.
+    """
+    fmt = text.strip().lower().removeprefix('.')
+    if fmt not in VIDEO_FORMATS:
+        raise ValueError(f"Unsupported format '{text}'. Supported: {', '.join(VIDEO_FORMATS)}.")
+    return fmt
+
+
+def output_video_format(filename: str, requested: str | None) -> str:
+    """The requested format, else the format of the uploaded file, else mp4 when that format is not supported."""
+    if requested is not None:
+        return requested
+    fmt = Path(filename).suffix.lower().removeprefix('.')
+    return fmt if fmt in VIDEO_FORMATS else DEFAULT_VIDEO_FORMAT
+
+
 async def censor_video(request):
     """Censor a video in one go."""
     reader = await request.multipart()
     config = None
+    requested_format = None
     filename = 'video.mp4'
     path = UPLOAD_DIR / filename
 
@@ -96,6 +130,11 @@ async def censor_video(request):
             filename = await part.text()
             if not is_plain_filename(filename):
                 return web.json_response({'error': f"Invalid filename '{filename}'."}, status=400)
+        elif part.name == 'format':
+            try:
+                requested_format = parse_video_format(await part.text())
+            except ValueError as e:
+                return web.json_response({'error': str(e)}, status=400)
         elif part.name == 'video':
             path = UPLOAD_DIR / filename
             async with aiofiles.open(path, mode='wb') as f:
@@ -105,9 +144,8 @@ async def censor_video(request):
                     await f.write(chunk)
 
     # Censor the video
-    output_path = CENSORED_PATH / filename
-    # if config is not None:
-    #     config = construct_censor_config(config)
+    video_format = output_video_format(filename, requested_format)
+    output_path = CENSORED_PATH / Path(filename).with_suffix('.' + video_format).name
     result = await submit_video_job(video_path=path, output_path=output_path, censor_config=config, early_exit=False)
     if not result.success:
         logger.warning(f"Error censoring video: {str(result.error)}")
@@ -119,7 +157,7 @@ async def censor_video(request):
     response = web.StreamResponse(
         status=200,
         reason='OK',
-        headers={'Content-Type': 'video/mp4'}
+        headers={'Content-Type': VIDEO_FORMATS[video_format]}
     )
     await response.prepare(request)
 

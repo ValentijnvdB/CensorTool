@@ -128,12 +128,20 @@ A `multipart/form-data` request with these parts:
 | `filename` | no       | Name of the video, e.g. `clip.mp4`, without folders (`400` otherwise). Send it before the `video` part. Default `video.mp4`. |
 | `video`    | yes      | The video file.                                   |
 | `config`   | no       | A censor config as JSON text.                     |
+| `format`   | no       | Format of the censored video: `mp4`, `m4v`, `mov`, `mkv`, `webm`, `avi` or `gif` (a leading `.` and capitals are fine; `400` otherwise). Default: the format of `filename`, or `mp4` when that is not one of these. |
 
-The response is the censored video, streamed back as `video/mp4`. The request returns when the whole video is done.
+The response is the censored video, streamed back with the Content-Type of its format (e.g. `video/mp4`, `video/webm`,
+`image/gif`). The request returns when the whole video is done.
+
+The video is encoded as H.264 (VP9 for `webm`). The audio is kept as it is when the format does not change (and always
+for `mkv`); otherwise it is re-encoded to AAC (`mp4`, `m4v`, `mov`), Opus (`webm`) or MP3 (`avi`). A `gif` has no audio.
 
 ```
 curl -X POST http://localhost:8443/censor_video \
      -F filename=clip.mp4 -F video=@clip.mp4 -o clip_censored.mp4
+
+curl -X POST http://localhost:8443/censor_video \
+     -F filename=clip.mp4 -F format=webm -F video=@clip.mp4 -o clip_censored.webm
 ```
 
 ## GET /censor_frame

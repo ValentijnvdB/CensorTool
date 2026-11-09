@@ -24,6 +24,23 @@ def _optional_str(value: Any) -> Optional[str]:
     return None if value is None else str(value)
 
 
+_H264 = ['-c:v', 'libx264', '-crf', '21', '-preset', 'veryfast']
+_VIDEO_CODECS = {
+    '.webm': ['-c:v', 'libvpx-vp9', '-crf', '32', '-b:v', '0', '-deadline', 'good', '-cpu-used', '4', '-row-mt', '1'],
+}
+"""ffmpeg video codec arguments per output container. Others get H.264."""
+
+_AUDIO_CODECS = {'.mp4': 'aac', '.m4v': 'aac', '.mov': 'aac', '.webm': 'libopus', '.avi': 'libmp3lame'}
+"""Audio codec per output container, used when the input is in another container (its audio may not fit)."""
+
+
+def _audio_codec(output_container: str, input_container: str) -> str:
+    """Copy the audio when the container stays the same (or is mkv, which takes any codec), re-encode otherwise."""
+    if output_container == input_container or output_container not in _AUDIO_CODECS:
+        return 'copy'
+    return _AUDIO_CODECS[output_container]
+
+
 class VideoJob:
     """Unit of work submitted to VideoPipeline. A censor config is required unless early_exit."""
 
@@ -339,10 +356,11 @@ class VideoPipeline:
     # ------------------------------------ encoding ------------------------------------
     @staticmethod
     def _write_video(avi_path: Path, video_path: str, output_path: str, has_audio: bool) -> None:
+        container = Path(output_path).suffix.lower()
         args = ['ffmpeg', '-y', '-loglevel', 'error', '-i', str(avi_path)]
         if has_audio:
-            args += ['-i', video_path, '-c:a', 'copy']
-        args += ['-c:v', 'libx264', '-crf', '21', '-preset', 'veryfast', '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2']
+            args += ['-i', video_path, '-c:a', _audio_codec(container, Path(video_path).suffix.lower())]
+        args += _VIDEO_CODECS.get(container, _H264) + ['-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2']
         if has_audio:
             args += ['-map', '0:0', '-map', '1:a', '-shortest']
         args.append(output_path)
