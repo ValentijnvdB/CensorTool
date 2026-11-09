@@ -64,15 +64,16 @@ enable_watermark: false
 #-------------------- STICKERS --------------------
 # Stickers are small images. Place them in ./data/stickers/<subdir>. In the example below 'plants' is a <subdir>.
 # Place any plant related stickers in that folder and the program will pick one at random.
-# Multiple subdirs can be provided. If empty, a sticker is chosen from all available stickers.
+# 'stickers' lists subdirs and/or single images (relative to ./data/stickers); one is picked at random from all
+# of their images. If empty, a sticker is chosen from all available stickers.
 # overlay:
 #   type: sticker
 #   probability: 0.5  # the probability a sticker is place. 0 is never, 1 is always
-#   categories: ['plants', 'misc']
+#   stickers: ['plants', 'misc', 'animals/cat.png']
 # or to pick any sticker:
 # overlay:
 #   type: sticker
-#   categories: []
+#   stickers: []
 #-------------------- TEXT --------------------
 # Text will place a random value from the value list on a feature. Some options are optional
 # overlay:

@@ -23,7 +23,7 @@ from app.config import CensorConfigError, check_client_censor_config
 from core.censor_config import censor_config_from_dict
 
 from . import request_reader as rr
-from .helpers import get_default_censor_config, get_labels, get_profile, submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
+from .helpers import get_default_censor_config, get_labels, get_profile, get_sticker_file, get_stickers, submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
     submit_video_job
 from .response_constructor import construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH, UPLOAD_DIR
@@ -409,6 +409,27 @@ async def censor_config(request):
         return web.json_response({'error': str(e)}, status=500)
 
 
+async def stickers(request):
+    """The sticker categories and images in data/stickers, or in the folder given with ?dir=."""
+    try:
+        return web.json_response({'status': 'success', **get_stickers(request.query.get('dir'))})
+
+    except CensorConfigError as e:
+        return web.json_response({'error': str(e)}, status=400)
+
+    except Exception as e:
+        logger.error(f"Error listing stickers: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def sticker_file(request):
+    """One sticker image, by its path relative to data/stickers."""
+    try:
+        return web.FileResponse(get_sticker_file(request.match_info['path']))
+    except FileNotFoundError as e:
+        return web.json_response({'error': str(e)}, status=404)
+
+
 async def init_app():
     """Initialize aiohttp application"""
     app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB max
@@ -431,6 +452,8 @@ async def init_app():
     app.router.add_get('/reset_cache', reset_cache)
     app.router.add_get('/profile', profile)
     app.router.add_get('/censor_config', censor_config)
+    app.router.add_get('/stickers', stickers)
+    app.router.add_get('/stickers/{path:.+}', sticker_file)
 
     app.router.add_static('/censored', path=CENSORED_PATH)
     app.router.add_static('/assets', path=str(constants.assets_path))

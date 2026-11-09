@@ -22,6 +22,8 @@ config use the profile's `censor_config.yml`.
 | [`/reset_cache`](#get-reset_cache)      | GET             | Delete the server's detection cache.            |
 | [`/profile`](#get-profile)              | GET             | The loaded profile and the labels it can detect. |
 | [`/censor_config`](#get-censor_config)  | GET             | The censor config used when a request has none. |
+| [`/stickers`](#get-stickers)            | GET             | The sticker categories and images.              |
+| [`/stickers/<path>`](#get-stickerspath) | GET             | One sticker image.                              |
 | `/censored/<name>`                      | GET             | Censored images saved with `expected_response: url`. |
 | `/assets/<name>`                        | GET             | Static assets (status images).                  |
 
@@ -226,3 +228,34 @@ sent back as `config` in a request.
 - The file is read once, when the server starts. Changes to it take effect after a restart.
 - The ComfyUI settings (`comfy_host`, `comfy_port`, `comfy_workflow`) are left out of `ai_remove` censor styles.
   They are not needed when the config is sent back: the server always uses its own.
+
+## GET /stickers
+
+Lists the sticker categories and images in `data/stickers`. A category is any subfolder, nested ones included; a
+category also picks the images in its own subfolders. Only images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.tif`,
+`.tiff`) are listed. Other files are never used as stickers.
+
+```json
+{
+  "status": "success",
+  "stickers_dir": "data/stickers",
+  "categories": ["misc", "plants", "plants/flowers"],
+  "stickers": [
+    {"path": "misc/star.png", "url": "/stickers/misc/star.png"},
+    {"path": "plants/fern.png", "url": "/stickers/plants/fern.png"},
+    {"path": "plants/flowers/rose.png", "url": "/stickers/plants/flowers/rose.png"}
+  ]
+}
+```
+
+- `?dir=<stickers_dir>` lists a subfolder instead, as it would be written as `stickers_dir` in a censor config, e.g.
+  `/stickers?dir=data/stickers/plants`. `categories` and `path` are then relative to that folder, so they can be used
+  as `overlay.stickers` entries with that `stickers_dir`. A `dir` outside `data/stickers` is rejected with status `400`.
+- `url` is where [`GET /stickers/<path>`](#get-stickerspath) serves the image (always relative to `data/stickers`).
+- The folder is read on every request, so stickers added while the server runs are listed straight away.
+- A folder that does not exist (yet) gives empty lists.
+
+## GET /stickers/&lt;path&gt;
+
+Returns one sticker image, by its path relative to `data/stickers` (the `url` in [`GET /stickers`](#get-stickers)).
+Anything that is not a sticker image inside `data/stickers` gets status `404`.

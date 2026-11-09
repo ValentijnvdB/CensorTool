@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 import numpy as np
 
@@ -10,7 +11,9 @@ import constants
 
 from core.backend import cc
 
-from app.config import COMFY_KEYS, current_profile, make_image_pipeline, read_censor_config_from_file
+from app.config import (COMFY_KEYS, current_profile, make_image_pipeline,
+                        read_censor_config_from_file, resolve_stickers_dir)
+from core.boxes import is_sticker_file
 from . import utils, server_config
 
 # censoring pipelines, created by start_pipeline()
@@ -65,6 +68,50 @@ def get_default_censor_config() -> dict:
         if isinstance(box, dict):
             strip(box.get('censor_style'))
     return config
+
+
+def get_stickers(stickers_dir: str | None = None) -> dict:
+    """
+    The sticker categories and images in a stickers folder.
+
+    :param stickers_dir: as in a censor config: data/stickers or one of its subfolders, relative to the working
+        directory. None is data/stickers.
+    :return: {'stickers_dir': the folder relative to the working dir,
+              'categories': every subfolder, relative to the folder (usable as overlay.stickers entries),
+              'stickers': [{'path': relative to the folder, 'url': where GET /stickers/<path> serves it}]}
+    :raises CensorConfigError: if stickers_dir is outside data/stickers.
+    """
+    base = resolve_stickers_dir(stickers_dir)
+    root = constants.stickers_root_path.resolve()
+
+    categories, stickers = [], []
+    if base.is_dir():
+        for p in sorted(base.rglob('*')):
+            if not p.resolve().is_relative_to(root):  # a symlink out of data/stickers
+                continue
+            if p.is_dir():
+                categories.append(p.relative_to(base).as_posix())
+            elif is_sticker_file(p):
+                stickers.append({'path': p.relative_to(base).as_posix(),
+                                 'url': '/stickers/' + quote(p.relative_to(root).as_posix())})
+
+    return {'stickers_dir': base.relative_to(constants.instance_dir).as_posix()
+                            if base.is_relative_to(constants.instance_dir) else str(base),
+            'categories': categories,
+            'stickers': stickers}
+
+
+def get_sticker_file(path: str) -> Path:
+    """
+    The sticker image at path, relative to data/stickers.
+
+    :raises FileNotFoundError: if there is no sticker image there, or it is outside data/stickers.
+    """
+    root = constants.stickers_root_path.resolve()
+    file = (root / path).resolve()
+    if not file.is_relative_to(root) or not is_sticker_file(file):
+        raise FileNotFoundError(f"No sticker '{path}'.")
+    return file
 
 
 def get_profile() -> str | None:

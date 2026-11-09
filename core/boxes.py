@@ -61,36 +61,48 @@ _STICKER_MAX_AGE = 5.0  # seconds
 _sticker_lock = threading.Lock()
 _sticker_cache: dict[tuple, tuple[float, list[Path]]] = {}
 
+# Files with another extension in a stickers folder are skipped. All of these can be read by cv2.imread.
+STICKER_EXT = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff')
 
-def _sticker_files(base: Path, subdirs: Iterable[str]) -> list[Path]:
+
+def is_sticker_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in STICKER_EXT
+
+
+def _sticker_files(base: Path, entries: Iterable[str]) -> list[Path]:
     """
-    The sticker files of a stickers folder + categories. Kept for a few seconds: scanning the folder for every box
-    on every frame is slow on live streams and videos.
+    The sticker files of a stickers folder + the entries of an overlay's stickers list, without duplicates.
+    An entry is a folder (all images in it, subfolders included) or a single image. No entries: every sticker in
+    the folder. Entries that do not exist or are not an image are skipped.
+
+    Kept for a few seconds: scanning the folder for every box on every frame is slow on live streams and videos.
     """
-    subdirs = tuple(subdirs)
-    key = (str(base), subdirs)
+    entries = tuple(entries)
+    key = (str(base), entries)
     now = time.monotonic()
     with _sticker_lock:
         cached = _sticker_cache.get(key)
         if cached is not None and now - cached[0] < _STICKER_MAX_AGE:
             return cached[1]
 
-    targets = [base / s for s in subdirs] if subdirs else [base]
-    files = []
-    for target in targets:
+    files: dict[Path, None] = {}  # ordered set
+    for target in ([base / e for e in entries] if entries else [base]):
         if target.is_dir():
-            files.extend(p.absolute() for p in sorted(target.rglob('*')) if p.is_file())
+            files.update((p.absolute(), None) for p in sorted(target.rglob('*')) if is_sticker_file(p))
+        elif is_sticker_file(target):
+            files[target.absolute()] = None
+    result = list(files)
 
     with _sticker_lock:
-        _sticker_cache[key] = (now, files)
-    return files
+        _sticker_cache[key] = (now, result)
+    return result
 
 
 def _generate_overlay(ov: Overlay, config: CensorConfig) -> str:
     if isinstance(ov, OvText):
         return random.choice(ov.values) if ov.values else ''
     if isinstance(ov, OvSticker):
-        files = _sticker_files(config.stickers_dir, ov.categories)
+        files = _sticker_files(config.stickers_dir, ov.stickers)
         return str(random.choice(files)) if files else ''
     return ''
 

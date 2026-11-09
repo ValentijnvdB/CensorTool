@@ -71,7 +71,9 @@ class OvText:
 @dataclass(frozen=True)
 class OvSticker:
     probability: float
-    categories: tuple[str, ...]
+    # Folders (all images in them, subfolders included) and/or single images, relative to stickers_dir.
+    # Empty: all stickers.
+    stickers: tuple[str, ...]
 
 
 Overlay = Union[OvText, OvSticker]
@@ -200,11 +202,17 @@ def _parse_overlay(d: Any, where: str) -> Optional[Overlay]:
             font=int(d.get('font', 0)),
         )
     if kind == 'sticker':
-        warn_unknown_keys(d, ['type', 'probability', 'categories'], where)
+        warn_unknown_keys(d, ['type', 'probability', 'categories', 'stickers'], where)
+        stickers = d.get('stickers')
+        stickers = [str(s) for s in stickers] if isinstance(stickers, list) else []
         categories = d.get('categories')
+        if categories is not None:
+            log_warning(f"{where}: overlay 'categories' is deprecated, put the folders in 'stickers' instead.")
+            if isinstance(categories, list):
+                stickers += [str(c) for c in categories]
         return OvSticker(
             probability=float(d.get('probability', 1.0)),
-            categories=tuple(str(c) for c in categories) if isinstance(categories, list) else (),
+            stickers=tuple(dict.fromkeys(stickers)),
         )
 
     log_warning(f"Unknown overlay type '{kind}', skipping overlay.")

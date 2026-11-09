@@ -774,3 +774,131 @@ class TestCensorFrameConfig:
 
         await self.frame(ws, b"a")
         assert ws.submitted[-1]["features_to_censor"] == ["FACE_FEMALE"]
+
+
+# ---------------------------------------------------------------------------
+# stickers
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def sticker_root(tmp_path, monkeypatch):
+    """data/stickers with plants/fern.png, plants/flowers/rose.JPG, star.webp, a README and a symlink out."""
+    import constants
+
+    instance = tmp_path / "instance"
+    root = instance / "data" / "stickers"
+    (root / "plants" / "flowers").mkdir(parents=True)
+    (root / "misc").mkdir()
+    (root / "plants" / "fern.png").write_bytes(b"png")
+    (root / "plants" / "flowers" / "rose.JPG").write_bytes(b"jpg")
+    (root / "star.webp").write_bytes(b"webp")
+    (root / "plants" / "README.txt").write_text("not a sticker")
+    outside = tmp_path / "secret"
+    outside.mkdir()
+    (outside / "secret.png").write_bytes(b"secret")
+    (root / "misc" / "link.png").symlink_to(outside / "secret.png")
+    (root / "out").symlink_to(outside, target_is_directory=True)
+
+    monkeypatch.setattr(constants, "instance_dir", instance)
+    monkeypatch.setattr(constants, "stickers_root_path", root)
+    return root
+
+
+def make_query_request(query=None, match_info=None):
+    request = MagicMock()
+    request.query = query or {}
+    request.match_info = match_info or {}
+    return request
+
+
+class TestGetStickers:
+
+    def test_lists_categories_and_images_only(self, sticker_root):
+        from server.helpers import get_stickers
+
+        result = get_stickers()
+
+        assert result["stickers_dir"] == "data/stickers"
+        assert result["categories"] == ["misc", "plants", "plants/flowers"]
+        assert result["stickers"] == [
+            {"path": "plants/fern.png", "url": "/stickers/plants/fern.png"},
+            {"path": "plants/flowers/rose.JPG", "url": "/stickers/plants/flowers/rose.JPG"},
+            {"path": "star.webp", "url": "/stickers/star.webp"},
+        ]
+
+    def test_subfolder_paths_are_relative_to_it_and_urls_to_the_root(self, sticker_root):
+        from server.helpers import get_stickers
+
+        result = get_stickers("data/stickers/plants")
+
+        assert result["stickers_dir"] == "data/stickers/plants"
+        assert result["categories"] == ["flowers"]
+        assert [s["path"] for s in result["stickers"]] == ["fern.png", "flowers/rose.JPG"]
+        assert result["stickers"][0]["url"] == "/stickers/plants/fern.png"
+
+    def test_missing_folder_is_empty(self, sticker_root):
+        from server.helpers import get_stickers
+
+        result = get_stickers("data/stickers/not_created_yet")
+        assert result["categories"] == [] and result["stickers"] == []
+
+    def test_url_is_quoted(self, sticker_root):
+        from server.helpers import get_stickers
+
+        (sticker_root / "my sticker#1.png").write_bytes(b"png")
+        urls = [s["url"] for s in get_stickers()["stickers"]]
+        assert "/stickers/my%20sticker%231.png" in urls
+
+    @pytest.mark.parametrize("stickers_dir", ["data", "/etc", "data/stickers/.."])
+    def test_outside_stickers_root_is_rejected(self, sticker_root, stickers_dir):
+        from app.config import CensorConfigError
+        from server.helpers import get_stickers
+
+        with pytest.raises(CensorConfigError):
+            get_stickers(stickers_dir)
+
+
+class TestStickersEndpoint:
+
+    @pytest.mark.asyncio
+    async def test_returns_listing(self, sticker_root):
+        from server.http_server import stickers
+
+        response = await stickers(make_query_request({"dir": "data/stickers/plants"}))
+
+        assert response.status == 200
+        body = json.loads(response.body)
+        assert body["status"] == "success"
+        assert body["categories"] == ["flowers"]
+
+    @pytest.mark.asyncio
+    async def test_dir_outside_stickers_root_returns_400(self, sticker_root):
+        from server.http_server import stickers
+
+        response = await stickers(make_query_request({"dir": "/etc"}))
+
+        assert response.status == 400
+        assert "not allowed" in json.loads(response.body)["error"]
+
+
+class TestStickerFile:
+
+    @pytest.mark.asyncio
+    async def test_serves_sticker(self, sticker_root):
+        from aiohttp import web
+        from server.http_server import sticker_file
+
+        response = await sticker_file(make_query_request(match_info={"path": "plants/fern.png"}))
+
+        assert isinstance(response, web.FileResponse)
+        assert Path(response._path) == (sticker_root / "plants" / "fern.png").resolve()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["plants/README.txt", "missing.png", "../../secret/secret.png",
+                                      "misc/link.png", "out/secret.png", "plants"])
+    async def test_rejects_non_stickers(self, sticker_root, path):
+        from server.http_server import sticker_file
+
+        response = await sticker_file(make_query_request(match_info={"path": path}))
+
+        assert response.status == 404

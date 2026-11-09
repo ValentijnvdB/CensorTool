@@ -150,18 +150,26 @@ overlay:
     font_scale: 1.0
 ```
 
-**Sticker**: a random image from `data/stickers/<category>/`:
+**Sticker**: a random image from the `stickers` list:
 
 ```yaml
 overlay:
     type: sticker
     probability: 0.5
-    categories: ['plants', 'misc']   # [] picks from all stickers
+    stickers: ['plants', 'misc', 'animals/cat.png']   # [] or left out picks from all stickers
 ```
 
-Stickers are scaled to fit the censored area; PNGs with transparency work best.
+Each entry is relative to `stickers_dir` and is either a folder (a category: every image in it, subfolders
+included) or a single image. All of them form one pool, and each box gets a random image from it (every image is
+equally likely; an image listed twice counts once). An entry that does not exist or is not an image is skipped.
 
-Stickers are only read from `data/stickers`: a `stickers_dir` or category that points outside it (an absolute path
+The older `categories: [...]` list still works but is deprecated: its folders are added to `stickers`.
+
+Stickers are scaled to fit the censored area; PNGs with transparency work best. Only images (`.png`, `.jpg`,
+`.jpeg`, `.webp`, `.bmp`, `.tif`, `.tiff`) are picked; other files in the folder are skipped. A server client can
+list the available categories and stickers with [`GET /stickers`](http_api.md#get-stickers).
+
+Stickers are only read from `data/stickers`: a `stickers_dir` or `stickers` entry that points outside it (an absolute path
 elsewhere, `..`, or a symlink out of the folder) is an error.
 
 ## Inverse censoring

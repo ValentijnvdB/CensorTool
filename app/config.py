@@ -177,30 +177,40 @@ def _inside_stickers_root(path: Path) -> bool:
     return path.resolve().is_relative_to(constants.stickers_root_path.resolve())
 
 
+def resolve_stickers_dir(stickers_dir: Any = None) -> Path:
+    """
+    The absolute path of a stickers_dir as written in a censor config: relative to the working directory,
+    data/stickers when None.
+
+    :raises CensorConfigError: if it is not data/stickers or one of its subfolders.
+    """
+    if stickers_dir is None:
+        return constants.stickers_root_path.resolve()
+    resolved = (constants.instance_dir / str(stickers_dir)).resolve()
+    if not _inside_stickers_root(resolved):
+        raise CensorConfigError(f"stickers_dir '{stickers_dir}' is not allowed, "
+                                f"it must be data/stickers or one of its subfolders.")
+    return resolved
+
+
 def restrict_sticker_paths(config: Any) -> Any:
     """
     Make sure stickers are only read from data/stickers and its subfolders.
 
     stickers_dir may be left out (data/stickers is used), or be data/stickers or one of its subfolders. A relative
-    stickers_dir is relative to the working directory. Sticker overlay categories must stay inside stickers_dir.
+    stickers_dir is relative to the working directory. The entries of a sticker overlay's stickers list (and of the
+    deprecated categories list) must stay inside data/stickers.
 
     stickers_dir is replaced by its absolute path, so the backend finds it whatever the working directory is.
     The config is changed in place and returned. Anything that is not a mapping is returned unchanged
     (the backend reports it).
 
-    :raises CensorConfigError: if stickers_dir or a category points outside data/stickers.
+    :raises CensorConfigError: if stickers_dir or a stickers entry points outside data/stickers.
     """
     if not isinstance(config, dict):
         return config
 
-    stickers_dir = config.get('stickers_dir')
-    if stickers_dir is None:
-        resolved = constants.stickers_root_path.resolve()
-    else:
-        resolved = (constants.instance_dir / str(stickers_dir)).resolve()
-        if not _inside_stickers_root(resolved):
-            raise CensorConfigError(f"stickers_dir '{stickers_dir}' is not allowed, "
-                                    f"it must be data/stickers or one of its subfolders.")
+    resolved = resolve_stickers_dir(config.get('stickers_dir'))
     config['stickers_dir'] = str(resolved)
 
     boxes = [('default_censor_config', config.get('default_censor_config'))]
@@ -210,13 +220,16 @@ def restrict_sticker_paths(config: Any) -> Any:
 
     for where, box in boxes:
         overlay = box.get('overlay') if isinstance(box, dict) else None
-        categories = overlay.get('categories') if isinstance(overlay, dict) else None
-        if not isinstance(categories, list):
+        if not isinstance(overlay, dict):
             continue
-        for category in categories:
-            if not _inside_stickers_root(resolved / str(category)):
-                raise CensorConfigError(f"Sticker category '{category}' in {where} is not allowed, "
-                                        f"it must be a subfolder of the stickers folder.")
+        for key in ('stickers', 'categories'):
+            paths = overlay.get(key)
+            if not isinstance(paths, list):
+                continue
+            for path in paths:
+                if not _inside_stickers_root(resolved / str(path)):
+                    raise CensorConfigError(f"Sticker '{path}' in {where} is not allowed, "
+                                            f"it must be inside the stickers folder.")
     return config
 
 
