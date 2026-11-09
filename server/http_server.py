@@ -20,7 +20,7 @@ import constants
 from core.backend import cc
 
 from . import request_reader as rr
-from .helpers import submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
+from .helpers import get_default_censor_config, get_labels, get_profile, submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
     submit_video_job
 from .response_constructor import construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH, UPLOAD_DIR
@@ -272,6 +272,36 @@ async def reset_cache(request):
         return web.json_response({'error': str(e)}, status=500)
 
 
+async def profile(request):
+    """The loaded profile and every label (class name) its models can produce."""
+    try:
+        label_models = get_labels()
+        return web.json_response({
+            'status': 'success',
+            'profile': get_profile(),
+            'labels': sorted(label_models),
+            'models': dict(label_models),
+        })
+
+    except Exception as e:
+        logger.error(f"Error reading profile: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def censor_config(request):
+    """The censor config used when a request does not provide one, as in the profile's censor_config.yml."""
+    try:
+        return web.json_response({
+            'status': 'success',
+            'profile': get_profile(),
+            'config': get_default_censor_config(),
+        })
+
+    except Exception as e:
+        logger.error(f"Error reading censor config: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
 async def init_app():
     """Initialize aiohttp application"""
     app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB max
@@ -292,6 +322,8 @@ async def init_app():
 
     app.router.add_get('/censor_frame', censor_frame)
     app.router.add_get('/reset_cache', reset_cache)
+    app.router.add_get('/profile', profile)
+    app.router.add_get('/censor_config', censor_config)
 
     app.router.add_static('/censored', path=CENSORED_PATH)
     app.router.add_static('/assets', path=str(constants.assets_path))

@@ -20,6 +20,8 @@ config use the profile's `censor_config.yml`.
 | [`/censor_video`](#post-censor_video)   | POST (multipart)| Censor a video.                                 |
 | [`/censor_frame`](#get-censor_frame)    | GET (WebSocket) | Censor a stream of frames in real time.         |
 | [`/reset_cache`](#get-reset_cache)      | GET             | Delete the server's detection cache.            |
+| [`/profile`](#get-profile)              | GET             | The loaded profile and the labels it can detect. |
+| [`/censor_config`](#get-censor_config)  | GET             | The censor config used when a request has none. |
 | `/censored/<name>`                      | GET             | Censored images saved with `expected_response: url`. |
 | `/assets/<name>`                        | GET             | Static assets (status images).                  |
 
@@ -149,3 +151,43 @@ A WebSocket for real-time censoring, e.g. of a video playing in the browser. Eac
 ## GET /reset_cache
 
 Deletes everything in the server's detection cache (`cache/server/`). Returns `{"status": "success"}`.
+
+## GET /profile
+
+Returns the name of the loaded profile and lists every label (class name) the models in the profile's `pipeline.yml` can produce, after `names`, `labels`,
+`label_prefix` and `classes` are applied. These are the labels a censor config can refer to.
+
+```json
+{
+  "status": "success",
+  "profile": "nudity",
+  "labels": ["EYES_FEMALE", "FACE_FEMALE", "FACE_MALE"],
+  "models": {"EYES_FEMALE": "landmarks", "FACE_FEMALE": "nudenet", "FACE_MALE": "nudenet"}
+}
+```
+
+- `profile` is the name of the profile directory the server was started with.
+- `labels` is sorted alphabetically.
+- `models` maps each label to the model that produces it (its `name` in `pipeline.yml`, or `landmarks`).
+
+## GET /censor_config
+
+Returns the censor config the server uses when a request does not provide one: the profile's `censor_config.yml`
+as it was written (not parsed, so left-out settings are not filled in with their defaults). It can be changed and
+sent back as `config` in a request.
+
+```json
+{
+  "status": "success",
+  "profile": "nudity",
+  "config": {
+    "features_to_censor": ["FACE_FEMALE", "FEMALE_BREAST_EXPOSED"],
+    "default_censor_config": {"censor_style": {"type": "bar", "color": [0, 0, 0]}, "min_probability": 0.25},
+    "feature_overrides": {"FACE_FEMALE": {"censor_style": {"type": "pixel", "factor": 20}}}
+  }
+}
+```
+
+- The file is read once, when the server starts. Changes to it take effect after a restart.
+- The ComfyUI settings (`comfy_host`, `comfy_port`, `comfy_workflow`) are left out of `ai_remove` censor styles.
+  A config with `ai_remove` sent back in a request needs them added again.

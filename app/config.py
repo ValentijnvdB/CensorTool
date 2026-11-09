@@ -366,6 +366,7 @@ def censor_config_has_changed(prev_hash: str, path: Path = None) -> Config:
 # Private variables
 # Set by init_configs.
 _default_censor_config_path: Path | None = None
+_profile_name: str | None = None
 _config_path: Path | None = None
 
 # Public variables
@@ -377,6 +378,11 @@ def _apply_config(new: Config):
     """Copy all values of new into the global CONFIG object."""
     for f in fields(Config):
         setattr(CONFIG, f.name, getattr(new, f.name))
+
+
+def current_profile() -> str | None:
+    """Name of the profile loaded by init_configs (its directory name), or None before that."""
+    return _profile_name
 
 
 def config_file_hash() -> str:
@@ -422,7 +428,7 @@ def init_configs(profile: str | Path | None = None,
 
     :raises ProfileError: if the profile or one of the config files cannot be found.
     """
-    global _default_censor_config_path, _config_path
+    global _default_censor_config_path, _config_path, _profile_name
 
     profile_dir = resolve_profile_dir(profile)
     config_path, censor_config_path, pipeline_path = resolve_profile_files(
@@ -449,4 +455,5 @@ def init_configs(profile: str | Path | None = None,
     _apply_config(config)
     _config_path = Path(config_path)
     _default_censor_config_path = censor_config_path
+    _profile_name = profile_dir.name
     logger.info(f"Loaded config from {config_path}.")

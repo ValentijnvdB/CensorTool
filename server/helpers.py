@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import uuid
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import constants
 
 from core.backend import cc
 
-from app.config import make_image_pipeline, read_censor_config_from_file
+from app.config import current_profile, make_image_pipeline, read_censor_config_from_file
 from . import utils, server_config
 
 # censoring pipelines, created by start_pipeline()
@@ -29,6 +30,46 @@ def start_pipeline(debug: bool):
     _image_pipeline.start()
     _video_pipeline = cc.VideoPipeline(_image_pipeline)
     _debug = debug
+
+
+def get_labels() -> dict[str, str]:
+    """Every label the loaded pipeline can produce, mapped to the model that produces it."""
+    if _image_pipeline is None:
+        raise RuntimeError("The pipeline has not been started.")
+    return _image_pipeline.labels
+
+
+# Keys added to ai_remove censor styles from config.yml. They are server settings (host, local path),
+# so they are left out of the censor config the server hands out.
+_PRIVATE_STYLE_KEYS = ('comfy_host', 'comfy_port', 'comfy_workflow')
+
+
+def get_default_censor_config() -> dict:
+    """
+    The censor config used when a request does not provide one, as read from the profile's censor_config.yml
+    (not parsed), without the ComfyUI settings.
+    """
+    if _default_censor_config is None:
+        raise RuntimeError("The pipeline has not been started.")
+
+    config = copy.deepcopy(_default_censor_config)
+
+    def strip(style):
+        if isinstance(style, dict):
+            for key in _PRIVATE_STYLE_KEYS:
+                style.pop(key, None)
+
+    strip((config.get('default_censor_config') or {}).get('censor_style'))
+    strip(config.get('inverse_censor_style'))
+    for box in (config.get('feature_overrides') or {}).values():
+        if isinstance(box, dict):
+            strip(box.get('censor_style'))
+    return config
+
+
+def get_profile() -> str | None:
+    """Name of the loaded profile."""
+    return current_profile()
 
 
 def stop_pipeline():

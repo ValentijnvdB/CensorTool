@@ -398,3 +398,98 @@ class TestResetCache:
         assert result.status == 500
         body = json.loads(result.body)
         assert "error" in body
+
+
+# ---------------------------------------------------------------------------
+# profile
+# ---------------------------------------------------------------------------
+
+class TestProfile:
+
+    @pytest.mark.asyncio
+    async def test_returns_profile_sorted_labels_and_models(self, fake_request):
+        from server.http_server import profile
+
+        label_models = {"FACE_MALE": "nudenet", "EYES_FEMALE": "landmarks", "FACE_FEMALE": "nudenet"}
+        with patch("server.http_server.get_labels", return_value=label_models), \
+                patch("server.http_server.get_profile", return_value="nudity"):
+            response = await profile(fake_request)
+
+        assert response.status == 200
+        body = json.loads(response.body)
+        assert body["status"] == "success"
+        assert body["profile"] == "nudity"
+        assert body["labels"] == ["EYES_FEMALE", "FACE_FEMALE", "FACE_MALE"]
+        assert body["models"] == label_models
+
+    @pytest.mark.asyncio
+    async def test_returns_500_when_pipeline_not_started(self, fake_request):
+        from server.http_server import profile
+
+        with patch("server.http_server.get_labels", side_effect=RuntimeError("The pipeline has not been started.")):
+            response = await profile(fake_request)
+
+        assert response.status == 500
+        assert "not been started" in json.loads(response.body)["error"]
+
+
+# ---------------------------------------------------------------------------
+# censor_config
+# ---------------------------------------------------------------------------
+
+class TestCensorConfig:
+
+    @pytest.mark.asyncio
+    async def test_returns_profile_and_config(self, fake_request):
+        from server.http_server import censor_config
+
+        config = {"features_to_censor": ["FACE_FEMALE"],
+                  "default_censor_config": {"censor_style": {"type": "bar", "color": [0, 0, 0]}}}
+        with patch("server.http_server.get_default_censor_config", return_value=config), \
+                patch("server.http_server.get_profile", return_value="nudity"):
+            response = await censor_config(fake_request)
+
+        assert response.status == 200
+        body = json.loads(response.body)
+        assert body == {"status": "success", "profile": "nudity", "config": config}
+
+    @pytest.mark.asyncio
+    async def test_returns_500_when_pipeline_not_started(self, fake_request):
+        from server.http_server import censor_config
+
+        with patch("server.http_server.get_default_censor_config",
+                   side_effect=RuntimeError("The pipeline has not been started.")):
+            response = await censor_config(fake_request)
+
+        assert response.status == 500
+        assert "not been started" in json.loads(response.body)["error"]
+
+
+class TestGetDefaultCensorConfig:
+
+    def test_strips_comfy_settings_and_leaves_stored_config_untouched(self):
+        from server import helpers
+
+        comfy = {"comfy_host": "localhost", "comfy_port": 8188, "comfy_workflow": "/home/me/workflow.json"}
+        stored = {
+            "features_to_censor": ["FACE_FEMALE", "FACE_MALE"],
+            "default_censor_config": {"censor_style": {"type": "ai_remove", **comfy}},
+            "feature_overrides": {"FACE_FEMALE": {"censor_style": {"type": "ai_remove", **comfy}},
+                                  "FACE_MALE": None},
+            "inverse_censor_style": {"type": "blur", "strength": 31},
+        }
+        with patch.object(helpers, "_default_censor_config", stored):
+            config = helpers.get_default_censor_config()
+
+        assert config["default_censor_config"]["censor_style"] == {"type": "ai_remove"}
+        assert config["feature_overrides"]["FACE_FEMALE"]["censor_style"] == {"type": "ai_remove"}
+        assert config["feature_overrides"]["FACE_MALE"] is None
+        assert config["inverse_censor_style"] == {"type": "blur", "strength": 31}
+        assert stored["default_censor_config"]["censor_style"]["comfy_host"] == "localhost"
+
+    def test_raises_when_pipeline_not_started(self):
+        from server import helpers
+
+        with patch.object(helpers, "_default_censor_config", None):
+            with pytest.raises(RuntimeError, match="not been started"):
+                helpers.get_default_censor_config()
