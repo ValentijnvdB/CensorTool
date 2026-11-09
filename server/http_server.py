@@ -20,6 +20,7 @@ import constants
 from core.backend import cc
 
 from app.config import CensorConfigError, check_client_censor_config
+from core.censor_config import censor_config_from_dict
 
 from . import request_reader as rr
 from .helpers import get_default_censor_config, get_labels, get_profile, submit_censoring_job, start_pipeline, stop_pipeline, submit_detection_job, submit_gif_job, \
@@ -132,6 +133,38 @@ async def censor_video(request):
     return response
 
 
+def read_config_message(text: str) -> dict | None:
+    """
+    Read a {"type": "config", "config": {...} | null} message sent over the /censor_frame WebSocket.
+
+    :return: the checked censor config, or None to go back to the profile's censor config.
+    :raises ValueError: if the message is not valid or the config is not allowed or not valid.
+    """
+    try:
+        message = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Message is not valid JSON: {e}") from None
+    if not isinstance(message, dict):
+        raise ValueError("Message must be a JSON object.")
+    if message.get('type') != 'config':
+        raise ValueError(f"Unknown message type '{message.get('type')}'.")
+    if 'config' not in message:
+        raise ValueError("Message has no 'config'.")
+
+    config = message['config']
+    if config is None:
+        return None
+    if not isinstance(config, dict):
+        raise ValueError("'config' must be an object or null.")
+
+    config = check_client_censor_config(config)
+    try:
+        censor_config_from_dict(config)  # same format for both backends; fails here instead of on every frame
+    except Exception as e:
+        raise ValueError(f"Invalid censor config: {e}") from None
+    return config
+
+
 async def censor_frame(request):
     """Censor a video frame-by-frame. Used for real-time censoring."""
     ws = web.WebSocketResponse()
@@ -148,6 +181,9 @@ async def censor_frame(request):
     futures: list[cc.JobHandle] = []
 
     frames_send = deque()
+
+    # Censor config for this connection, set with a config text message. None is the profile's censor config.
+    config: dict | None = None
 
     def cancel_all():
         pass
@@ -180,9 +216,24 @@ async def censor_frame(request):
             fps = len(frames_send) / threshold if frames_send else 0
             logger.info(f"Current fps: {fps}. Active jobs: {len(futures)}")
 
+    async def set_config(text: str):
+        nonlocal config
+        try:
+            config = read_config_message(text)
+        except (ValueError, CensorConfigError) as e:
+            await ws.send_json({'type': 'error', 'error': str(e)})
+            return
+        # remembered frames were censored with the previous config
+        frames.clear()
+        logger.info("Censor config of the frame stream " + ("reset to the profile's." if config is None else "changed."))
+        await ws.send_json({'type': 'config', 'status': 'success'})
+
     async def receiver():
         async for msg in ws:
-            if msg.type == web.WSMsgType.BINARY:
+            if msg.type == web.WSMsgType.TEXT:
+                await set_config(msg.data)
+
+            elif msg.type == web.WSMsgType.BINARY:
                 header_bytes = msg.data[:HEADER_SIZE]
 
                 if header_bytes[0] == 1:
@@ -200,7 +251,7 @@ async def censor_frame(request):
                     update_fps()
                     continue
 
-                job, future = submit_censoring_job(image_bytes, None, None)
+                job, future = submit_censoring_job(image_bytes, None, config)
                 futures.append(future)
                 jobs[job.job_id] = job
                 headers[job.job_id] = header_bytes

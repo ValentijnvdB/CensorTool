@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 
 # ---------------------------------------------------------------------------
@@ -569,3 +570,132 @@ class TestCensorVideoFilename:
     def test_plain_filenames_are_allowed(self, filename):
         from server.http_server import is_plain_filename
         assert is_plain_filename(filename)
+
+
+# ---------------------------------------------------------------------------
+# censor_frame: config messages
+# ---------------------------------------------------------------------------
+
+VALID_CONFIG = {"features_to_censor": ["FACE_FEMALE"],
+                "default_censor_config": {"censor_style": {"type": "blur", "strength": 15}},
+                "inverse_censor_style": {"type": "blur", "strength": 31}}
+
+
+class TestReadConfigMessage:
+
+    def test_valid_config_is_returned_checked(self):
+        from server.http_server import read_config_message
+
+        config = read_config_message(json.dumps({"type": "config", "config": dict(VALID_CONFIG)}))
+        assert config["features_to_censor"] == ["FACE_FEMALE"]
+        assert "stickers_dir" in config  # went through check_client_censor_config
+
+    def test_null_config_resets(self):
+        from server.http_server import read_config_message
+
+        assert read_config_message('{"type": "config", "config": null}') is None
+
+    @pytest.mark.parametrize("text, error", [
+        ("not json", "not valid JSON"),
+        ("[1, 2]", "JSON object"),
+        ('{"type": "cancel"}', "Unknown message type"),
+        ('{"type": "config"}', "no 'config'"),
+        ('{"type": "config", "config": [1]}', "object or null"),
+        ('{"type": "config", "config": {"features_to_censor": []}}', "Invalid censor config"),
+        ('{"type": "config", "config": {"stickers_dir": "/etc", "features_to_censor": [], '
+         '"default_censor_config": {}}}', "not allowed"),
+    ])
+    def test_invalid_messages_are_rejected(self, text, error):
+        from app.config import CensorConfigError
+        from server.http_server import read_config_message
+
+        with pytest.raises((ValueError, CensorConfigError), match=error):
+            read_config_message(text)
+
+
+class TestCensorFrameConfig:
+    """Drives the WebSocket with a fake pipeline that finishes every job at once."""
+
+    HEADER = bytes([0]) + bytes(12)
+
+    @pytest_asyncio.fixture
+    async def ws(self):
+        from aiohttp import web as aio_web
+        from aiohttp.test_utils import TestClient, TestServer
+        import server.http_server as hs
+
+        submitted = []  # the config of every submitted job
+
+        def submit(image_bytes, output_path, config):
+            job = MagicMock()
+            job.job_id = str(len(submitted))
+            job.result = {"image": image_bytes}
+            submitted.append(config)
+            handle = MagicMock()
+            handle.wait.return_value = job
+            return job, handle
+
+        fake_cc = MagicMock()
+        fake_cc.wait_any.side_effect = lambda futures: futures[0]
+
+        app = aio_web.Application()
+        app.router.add_get('/censor_frame', hs.censor_frame)
+        with patch("server.http_server.submit_censoring_job", side_effect=submit), \
+                patch("server.http_server.cc", fake_cc), \
+                patch("server.http_server.np_to_bytes", side_effect=lambda img, ext: b"censored:" + img):
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            ws = await client.ws_connect('/censor_frame')
+            ws.submitted = submitted
+            yield ws
+            await ws.close()
+            await client.close()
+
+    async def frame(self, ws, image: bytes) -> bytes:
+        await ws.send_bytes(self.HEADER + image)
+        reply = await ws.receive_bytes(timeout=2)
+        assert reply[:13] == self.HEADER
+        return reply[13:]
+
+    @pytest.mark.asyncio
+    async def test_frames_use_the_profile_config_by_default(self, ws):
+        assert await self.frame(ws, b"a") == b"censored:a"
+        assert ws.submitted == [None]
+
+    @pytest.mark.asyncio
+    async def test_config_applies_to_following_frames_and_can_be_reset(self, ws):
+        await ws.send_str(json.dumps({"type": "config", "config": dict(VALID_CONFIG)}))
+        assert await ws.receive_json(timeout=2) == {"type": "config", "status": "success"}
+        await self.frame(ws, b"a")
+        assert ws.submitted[-1]["features_to_censor"] == ["FACE_FEMALE"]
+
+        await ws.send_str('{"type": "config", "config": null}')
+        assert (await ws.receive_json(timeout=2))["status"] == "success"
+        await self.frame(ws, b"b")
+        assert ws.submitted[-1] is None
+
+    @pytest.mark.asyncio
+    async def test_remembered_frames_are_censored_again_after_a_change(self, ws):
+        await self.frame(ws, b"a")
+        await self.frame(ws, b"a")
+        assert len(ws.submitted) == 1  # the second one came from memory
+
+        await ws.send_str(json.dumps({"type": "config", "config": dict(VALID_CONFIG)}))
+        await ws.receive_json(timeout=2)
+        await self.frame(ws, b"a")
+        assert len(ws.submitted) == 2
+
+    @pytest.mark.asyncio
+    async def test_rejected_config_keeps_the_previous_one_and_the_connection(self, ws):
+        await ws.send_str(json.dumps({"type": "config", "config": dict(VALID_CONFIG)}))
+        await ws.receive_json(timeout=2)
+
+        await ws.send_str('{"type": "config", "config": {"stickers_dir": "/etc"}}')
+        reply = await ws.receive_json(timeout=2)
+        assert reply["type"] == "error" and "not allowed" in reply["error"]
+
+        await ws.send_str("not json")
+        assert (await ws.receive_json(timeout=2))["type"] == "error"
+
+        await self.frame(ws, b"a")
+        assert ws.submitted[-1]["features_to_censor"] == ["FACE_FEMALE"]

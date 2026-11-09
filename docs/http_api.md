@@ -151,6 +151,29 @@ A WebSocket for real-time censoring, e.g. of a video playing in the browser. Eac
 - Frames are censored with the profile's censor config, several at a time, and may come back out of order.
   Frames identical to one seen earlier are answered from memory.
 
+### Changing the censor config
+
+Send a text message to censor the following frames with another censor config (same structure as the `config` of
+the other endpoints). It can be sent at any time and applies to this connection only:
+
+```json
+{"type": "config", "config": {"features_to_censor": ["FACE_FEMALE"], "default_censor_config": {"censor_style": {"type": "blur"}}}}
+```
+
+Send `"config": null` to go back to the profile's censor config. The server answers with a text message:
+
+```json
+{"type": "config", "status": "success"}
+{"type": "error", "error": "<message>"}
+```
+
+- The config is checked when it arrives. If it is not valid or not allowed (see [the top of this page](#http-api)), the server
+  answers with an `error` and keeps the previous config. Invalid JSON or an unknown `type` also gets an `error`;
+  the connection stays open.
+- Frames sent before the config message may still be in progress and come back censored with the previous config,
+  also after the `success` answer. To tell them apart, put a counter in the header.
+- After a change, frames seen earlier are censored again instead of answered from memory.
+
 ## GET /reset_cache
 
 Deletes everything in the server's detection cache (`cache/server/`). Returns `{"status": "success"}`.
