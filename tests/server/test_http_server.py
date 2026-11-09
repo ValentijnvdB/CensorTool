@@ -535,11 +535,11 @@ class TestRejectedCensorConfig:
 
 class TestDefaultCensorConfigStickersDir:
 
-    def test_stickers_dir_is_shown_relative_to_the_project(self):
+    def test_stickers_dir_is_shown_relative_to_the_working_dir(self):
         import constants
         from server import helpers
 
-        stored = {"stickers_dir": str(constants.project_root_dir / "data" / "stickers" / "plants")}
+        stored = {"stickers_dir": str(constants.instance_dir / "data" / "stickers" / "plants")}
         with patch.object(helpers, "_default_censor_config", stored):
             assert helpers.get_default_censor_config()["stickers_dir"] == "data/stickers/plants"
 

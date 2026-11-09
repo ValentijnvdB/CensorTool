@@ -9,12 +9,12 @@ from app.config import (CONFIG, CensorConfigError, apply_comfy_settings, check_c
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    """A project directory with data/stickers/plants, and a folder next to it that must not be reachable."""
-    root = tmp_path / 'project'
+    """A working directory with data/stickers/plants, and a folder next to it that must not be reachable."""
+    root = tmp_path / 'instance'
     stickers = root / 'data' / 'stickers'
     (stickers / 'plants').mkdir(parents=True)
     (tmp_path / 'secret').mkdir()
-    monkeypatch.setattr(app.config.constants, 'project_root_dir', root)
+    monkeypatch.setattr(app.config.constants, 'instance_dir', root)
     monkeypatch.setattr(app.config.constants, 'stickers_root_path', stickers)
     return root
 

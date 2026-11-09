@@ -2,7 +2,7 @@
 
 Which backend runs, which models it loads and where they run. `pipeline.yml` is only read at startup.
 
-Relative model paths are relative to the working directory, so run Censor Tool from the project root.
+Relative model paths are relative to the working directory (see [Instances](../README.md#instances)).
 
 ```yaml
 backend: python

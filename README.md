@@ -238,7 +238,7 @@ read at startup.
 ### HTTP server
 
 ```
-python main.py http [--host localhost] [--port 8443] [--ssl --ssl-cert cert.pem --ssl-key key.pem]
+python main.py http [--host localhost] [--port 8443] [--ssl --ssl-cert certs/cert.pem --ssl-key certs/key.pem]
 ```
 
 Starts a server with endpoints to censor images (`/censor_image`), videos (`/censor_video`) and a stream of
@@ -271,9 +271,11 @@ The endpoints and their request and response formats are described in [docs/http
 | Server | `--host` | `localhost` | Address to listen on. Use `0.0.0.0` to accept connections from other devices. |
 | | `--port` | `8443` | Port to listen on. |
 | | `--ssl` | off | Use HTTPS. |
-| | `--ssl-cert`, `--ssl-key` | `cert.pem`, `key.pem` | Certificate and key for HTTPS. |
+| | `--ssl-cert`, `--ssl-key` | `certs/cert.pem`, `certs/key.pem` | Certificate and key for HTTPS. |
 
 ### Folders
+
+All folders below are relative to the working directory, see [Instances](#instances).
 
 | Folder | Contents |
 |--------|----------|
@@ -285,6 +287,23 @@ The endpoints and their request and response formats are described in [docs/http
 | `cache/` | Cached detections (`images/`, `videos/`, `server/`). Safe to delete. |
 | `models/` | The models. |
 | `configs/` | The profiles. |
+| `certs/` | The HTTPS certificate and key. |
+
+### Instances
+
+Your data and settings (the folders above) are read from and written to the working directory, not the folder
+Censor Tool is installed in. Running `main.py` from another folder gives a separate instance with its own profiles,
+models, cache and output, using the same install:
+
+```
+mkdir ~/other-instance && cd ~/other-instance
+cp -r /path/to/CensorTool/configs .        # profiles to start from
+ln -s /path/to/CensorTool/models models    # or share the models
+python /path/to/CensorTool/main.py file
+```
+
+Relative paths in the config files (models in `pipeline.yml`, `stickers_dir`, `comfy_workflow`) are relative to the
+working directory too. Only `data/assets/`, which ships with the program, is always read from the install.
 
 ## Configuration
 
@@ -371,7 +390,7 @@ Results of the two can differ by a pixel here and there, not in what is detected
 [onnxruntime-gpu's requirements](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#requirements).
 
 **"Model ... not found".** The model file isn't at the path in `pipeline.yml`, see [Models](#models). Paths are
-relative to the working directory (normally the project root).
+relative to the working directory, see [Instances](#instances).
 
 **A label in the censor config is reported as unknown.** The censor config uses a label none of the models in
 `pipeline.yml` produce, for example `BODY` without the segmentation model, or NudeNet labels with Nevermore.

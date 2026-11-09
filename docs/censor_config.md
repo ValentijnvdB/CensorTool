@@ -71,7 +71,7 @@ feature_overrides:
 | `merge_overlapping_borders` | `false`            | Draw one border around overlapping censored areas instead of one per area. With different colors or thicknesses, one is picked. |
 | `enable_overlays`           | `true`             | Master switch for [overlays](#overlays). |
 | `enable_watermark`          | `false`            | Add a small "Censored using CensorTool" watermark. |
-| `stickers_dir`              | `./data/stickers`  | Folder with the sticker images. Must be `data/stickers` or one of its subfolders; a relative path is relative to the project folder. |
+| `stickers_dir`              | `./data/stickers`  | Folder with the sticker images. Must be `data/stickers` or one of its subfolders; a relative path is relative to the working directory. |
 
 ## Censor box
 

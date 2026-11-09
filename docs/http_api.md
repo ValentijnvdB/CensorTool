@@ -191,7 +191,7 @@ sent back as `config` in a request.
 }
 ```
 
-- `stickers_dir` is always included, relative to the project folder (`data/stickers` when the file leaves it out).
+- `stickers_dir` is always included, relative to the working directory (`data/stickers` when the file leaves it out).
 - The file is read once, when the server starts. Changes to it take effect after a restart.
 - The ComfyUI settings (`comfy_host`, `comfy_port`, `comfy_workflow`) are left out of `ai_remove` censor styles.
   They are not needed when the config is sent back: the server always uses its own.

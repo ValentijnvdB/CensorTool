@@ -146,7 +146,7 @@ def load_pipeline_spec(path: Path | str) -> dict[str, Any]:
         if 'path' in entry:
             model_path = Path(entry['path'])
             if not model_path.is_absolute():
-                model_path = Path.cwd() / model_path
+                model_path = constants.instance_dir / model_path
             entry['path'] = str(model_path.resolve())
         return entry
 
@@ -182,8 +182,7 @@ def restrict_sticker_paths(config: Any) -> Any:
     Make sure stickers are only read from data/stickers and its subfolders.
 
     stickers_dir may be left out (data/stickers is used), or be data/stickers or one of its subfolders. A relative
-    stickers_dir is relative to the project directory, not the working directory. Sticker overlay categories must
-    stay inside stickers_dir.
+    stickers_dir is relative to the working directory. Sticker overlay categories must stay inside stickers_dir.
 
     stickers_dir is replaced by its absolute path, so the backend finds it whatever the working directory is.
     The config is changed in place and returned. Anything that is not a mapping is returned unchanged
@@ -198,7 +197,7 @@ def restrict_sticker_paths(config: Any) -> Any:
     if stickers_dir is None:
         resolved = constants.stickers_root_path.resolve()
     else:
-        resolved = (constants.project_root_dir / str(stickers_dir)).resolve()
+        resolved = (constants.instance_dir / str(stickers_dir)).resolve()
         if not _inside_stickers_root(resolved):
             raise CensorConfigError(f"stickers_dir '{stickers_dir}' is not allowed, "
                                     f"it must be data/stickers or one of its subfolders.")

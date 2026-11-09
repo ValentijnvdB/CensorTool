@@ -8,14 +8,19 @@ ptb_hash_len = 4
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp", ".avif")
 VID_EXT = (".mp4", ".avi", ".gif")
 
-project_root_dir = Path(__file__).parent.absolute().resolve()
+# Where the program is installed. Only files that ship with the program are read from here.
+install_dir = Path(__file__).parent.absolute().resolve()
 
-data_root = project_root_dir / 'data'
+# The instance: all user data and user-editable files (data, configs, models, cache, certs) are relative to the
+# working directory, so running from another directory gives a separate instance with the same install.
+instance_dir = Path.cwd().absolute().resolve()
+
+data_root = instance_dir / 'data'
 uncensored_path = data_root / 'uncensored'
 censored_path = data_root / 'censored'
 stickers_root_path = data_root / 'stickers'
 debug_path = data_root / 'debug'
-assets_path = data_root / 'assets'
+assets_path = install_dir / 'data' / 'assets'  # ships with the program
 temp_path = data_root / 'temp'
 configs_path = temp_path / 'configs'
 log_path = data_root / 'logs'
@@ -23,15 +28,17 @@ log_path = data_root / 'logs'
 init_screen_image = assets_path / 'init_screen.png'
 failed_screen = assets_path / 'failed_screen.png'
 
-cache_root = project_root_dir / 'cache'
+cache_root = instance_dir / 'cache'
 image_cache_path = cache_root / 'images'
 video_cache_path = cache_root / 'videos'
 trash_bin_cache_path = cache_root / 'trashbin'
 
-model_root = project_root_dir / 'models'
+model_root = instance_dir / 'models'
+
+certs_path = instance_dir / 'certs'
 
 # Each subdirectory is a profile with a pipeline.yml, censor_config.yml and optionally a config.yml
-profiles_path = project_root_dir / 'configs'
+profiles_path = instance_dir / 'configs'
 
 
 # includes the RGB debug square color

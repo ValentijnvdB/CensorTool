@@ -205,8 +205,10 @@ def main():
     server_parser.add_argument('--ssl', action='store_true', help='Whether to enable https.')
     server_parser.add_argument('--port', default=8443, type=int, help='Port to run the server on.')
     server_parser.add_argument('--host', default='localhost', type=str, help='Host to run the server on.')
-    server_parser.add_argument('--ssl-cert', default='cert.pem', type=str, help='Path to certificate file.')
-    server_parser.add_argument('--ssl-key', default='key.pem', type=str, help='Path to key file.')
+    server_parser.add_argument('--ssl-cert', default=str(Path('certs') / 'cert.pem'), type=str,
+                               help='Path to certificate file.')
+    server_parser.add_argument('--ssl-key', default=str(Path('certs') / 'key.pem'), type=str,
+                               help='Path to key file.')
 
     args = parser.parse_args()
     create_dirs()

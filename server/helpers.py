@@ -54,10 +54,10 @@ def get_default_censor_config() -> dict:
             for key in COMFY_KEYS:  # server settings (host, local path), not handed out
                 style.pop(key, None)
 
-    # an absolute path after restrict_sticker_paths; show it relative to the project, as it is written in a config
+    # an absolute path after restrict_sticker_paths; show it relative to the working dir, as it is written in a config
     stickers_dir = config.get('stickers_dir')
-    if stickers_dir is not None and Path(stickers_dir).is_relative_to(constants.project_root_dir):
-        config['stickers_dir'] = Path(stickers_dir).relative_to(constants.project_root_dir).as_posix()
+    if stickers_dir is not None and Path(stickers_dir).is_relative_to(constants.instance_dir):
+        config['stickers_dir'] = Path(stickers_dir).relative_to(constants.instance_dir).as_posix()
 
     strip((config.get('default_censor_config') or {}).get('censor_style'))
     strip(config.get('inverse_censor_style'))
