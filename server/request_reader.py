@@ -19,6 +19,7 @@ import constants
 from utils.hash_utils import hash_bytes
 
 from server.server_config import UPLOAD_DIR
+from server import storage
 from .errors import (ApiError, DOWNLOAD_FAILED, INVALID_IMAGE, INVALID_REQUEST, URL_NOT_ALLOWED, USE_CENSOR_VIDEO,
                      GIF_MESSAGE)
 from .helpers import check_censor_config
@@ -241,13 +242,13 @@ def get_image_from_source(data: dict) -> tuple[bytes, Path]:
     # construct the write path
     path = get_image_path_from_url(url)
 
-    # check if we already retrieved the image
-    if path.exists() and path.is_file():
-        with open(path, 'rb') as f:
-            image = f.read()
-        return image, path
-
-    return download_image(url), path
+    # reuse the image if we already retrieved it (and it was not removed for being unused)
+    try:
+        image = path.read_bytes()
+    except (FileNotFoundError, IsADirectoryError):
+        return download_image(url), path
+    storage.touch(path)
+    return image, path
 
 
 def get_image_from_json(as_json: dict) -> tuple[bytes, Path]:

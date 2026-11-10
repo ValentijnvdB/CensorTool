@@ -709,10 +709,18 @@ class TestCensorVideoFormat:
         submit, _, _ = await self._run([self._text_part("filename", "clip.mp4"), self._video_part(b"new")])
 
         assert submit.call_args.kwargs["video_path"] == upload / "clip_1.mp4"
-        assert (upload / "clip_1.mp4").read_bytes() == b"new"
         assert (upload / "clip.mp4").read_bytes() == b"older upload"
         assert submit.call_args.kwargs["output_path"] == censored / "clip_1_1.mp4"
         assert (censored / "clip_1.mp4").read_bytes() == b"older output"
+
+    @pytest.mark.asyncio
+    async def test_files_are_removed_once_sent(self, dirs):
+        upload, censored, _ = dirs
+        submit, stream_response, _ = await self._run([self._text_part("filename", "clip.mp4"),
+                                                      self._video_part(b"new")])
+
+        stream_response.return_value.write.assert_awaited_with(b"new")  # the 'censored' copy was sent
+        assert list(upload.iterdir()) == [] and list(censored.iterdir()) == []
 
     @pytest.mark.asyncio
     async def test_detections_are_cached_per_content(self, dirs):
@@ -804,8 +812,9 @@ class TestCensorVideoUrl:
             submit, stream_response, _ = await self._run([("video_url", "https://example.com/media/my%20anim.gif")])
 
         assert download.call_args.args[0] == "https://example.com/media/my%20anim.gif"
-        assert (upload / "my anim.gif").read_bytes() == b"downloaded video"
+        assert submit.call_args.kwargs["video_path"] == upload / "my anim.gif"
         assert submit.call_args.kwargs["output_path"] == censored / "my anim.gif"
+        assert list(upload.iterdir()) == []  # removed once sent
         assert stream_response.call_args.kwargs["headers"]["Content-Type"] == "image/gif"
 
     @pytest.mark.asyncio

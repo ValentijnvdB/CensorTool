@@ -196,6 +196,11 @@ class VideoJobs:
                            f"minutes.", NOT_FOUND, 404)
         return record
 
+    def files(self) -> set[Path]:
+        """The files of every job the server still knows, which file clean-up must leave alone."""
+        return {path for record in self.jobs.values() for path in (record.input_path, record.output_path)
+                if path is not None}
+
     def all(self) -> list[VideoJobRecord]:
         self.expire()
         return list(self.jobs.values())

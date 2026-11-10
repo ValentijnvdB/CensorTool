@@ -51,3 +51,9 @@ comfy_port: 8188
 
 # Comfy-ui Workflow. (Not provided with the tool, so make sure you add one yourself)
 comfy_workflow: "./data/workflow.json"
+
+##################################################################
+#### HTTP server: images and videos the server keeps (in data/server/)
+#### are removed once they have not been used for this many hours.
+#### Fetching a censored image counts as a use. 0 keeps them forever.
+server_file_retention_hours: 24

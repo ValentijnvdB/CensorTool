@@ -59,6 +59,9 @@ class Config:
     comfy_port: int                         = 8188
     comfy_workflow: str|Path                = "./data/workflow.json"
 
+    # optional (may be left out of config.yml)
+    server_file_retention_hours: float      = 24  # HTTP server: remove files unused this long; 0 keeps them
+
     # --- from the command line ---
     debug: bool                             = False
 
@@ -334,6 +337,7 @@ def read_censor_config_from_file_w_hash(path: Path = None, prev_hash: str = None
 
 
 _CONFIG_KEYS = ('video_censor_fps', 'comfy_host', 'comfy_port', 'comfy_workflow')
+_OPTIONAL_CONFIG_KEYS = ('server_file_retention_hours',)
 _LIVE_KEYS = tuple(f.name for f in fields(LiveCensorConfig))
 _OPTIONAL_LIVE_KEYS = ('input_size', 'frames_in_flight')
 
@@ -359,7 +363,7 @@ def load_config(path: Path | str) -> Config:
             logger.warning(f"'{key}' in {path} is ignored, it is set in pipeline.yml now.")
         elif key == 'picture_size':
             logger.warning(f"'picture_size' in {path} is ignored, set 'imgsz' on the model in pipeline.yml instead.")
-        elif key not in _CONFIG_KEYS:
+        elif key not in _CONFIG_KEYS and key not in _OPTIONAL_CONFIG_KEYS:
             logger.warning(f"Unknown key '{key}' in {path} is ignored.")
 
     missing = [k for k in _CONFIG_KEYS if k not in config_dict] + \
@@ -367,7 +371,8 @@ def load_config(path: Path | str) -> Config:
     if missing:
         raise ValueError(f"'{path}' is missing: {', '.join(missing)}.")
 
-    config = Config(live=LiveCensorConfig(**live_dict), **{k: config_dict[k] for k in _CONFIG_KEYS})
+    config = Config(live=LiveCensorConfig(**live_dict), **{k: config_dict[k] for k in _CONFIG_KEYS},
+                    **{k: config_dict[k] for k in _OPTIONAL_CONFIG_KEYS if k in config_dict})
     validate_config(config)
     return config
 
@@ -385,6 +390,9 @@ def validate_config(config: Config):
         raise ValueError(f"video_censor_fps must be >= 0, got {config.video_censor_fps!r}.")
     if not is_int(config.comfy_port):
         raise ValueError(f"comfy_port must be an integer, got {config.comfy_port!r}.")
+    retention = config.server_file_retention_hours
+    if isinstance(retention, bool) or not isinstance(retention, (int, float)) or retention < 0:
+        raise ValueError(f"server_file_retention_hours must be >= 0, got {retention!r}.")
 
     live = config.live
     for name in ('cap_top', 'cap_left'):

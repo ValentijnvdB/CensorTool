@@ -40,3 +40,9 @@ filled in for every `ai_remove` style in the censor config that doesn't set them
 | `comfy_host`     | `"localhost"`                    | Host of the ComfyUI server. |
 | `comfy_port`     | `8188`                           | Port of the ComfyUI server. |
 | `comfy_workflow` | `"./data/workflow.json"`         | Workflow in ComfyUI's API format. It needs a node titled `IMAGE` and one titled `MASK` (both image loaders); the censored image and the mask of the censored area are put in those. Not included with Censor Tool. |
+
+## HTTP server
+
+| Key                           | Default | Description |
+|-------------------------------|---------|-------------|
+| `server_file_retention_hours` | `24`    | Files the HTTP server keeps in `data/server/` (uploaded, downloaded and censored images, video files) are removed once they have not been used for this many hours. Fetching a censored image counts as a use. `0` keeps them forever. Optional. See [Stored files](http_api.md#stored-files). |

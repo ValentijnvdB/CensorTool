@@ -404,7 +404,7 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
     job_id = str(uuid.uuid4())
 
     if output_path is None and _debug:
-        output_path: Path = constants.data_root / 'server' / 'debug' / (job_id + '.png')
+        output_path: Path = server_config.DEBUG_DIR / (job_id + '.png')
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Without a config the backend runs every model and censors nothing: fine for detection,

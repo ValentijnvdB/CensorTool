@@ -36,6 +36,8 @@ config use the profile's `censor_config.yml`.
 | [`/stickers`](#get-stickers)                          | GET              | The sticker categories and images.                 |
 | [`/stickers/<path>`](#get-stickerspath)               | GET              | One sticker image.                                 |
 | `/censored/<name>`                                    | GET              | Censored images saved with `expected_response: url`. |
+| [`/storage`](#get-storage)                            | GET              | Files and bytes the server keeps.                  |
+| [`/storage`](#delete-storage)                         | DELETE           | Remove the files the server keeps.                 |
 | `/assets/<name>`                                      | GET              | Static assets (status images).                     |
 
 ## Errors
@@ -98,7 +100,7 @@ The image type is taken from the extension in the URL. Only `http` and `https` U
 URLs that point to this machine (`localhost`, `127.0.0.1`, `[::1]`, `0.0.0.0`, ...) or the local network
 (`192.168.x.x`, `10.x.x.x`, link-local addresses, ...) are refused with `url_not_allowed`, also when a host name
 resolves to such an address or a redirect leads there. Downloaded images are kept in `data/server/uncensored/` and
-reused when the same URL is requested again.
+reused when the same URL is requested again, until they are [removed](#stored-files) for not being used.
 
 Supported image types: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp` and `.avif`. Extensions are
 case-insensitive.
@@ -123,7 +125,7 @@ Censors the image and returns it in the format set by `expected_response`:
 |---------------------|-----------------------------------------------------------------------------------------------|
 | `base64`            | JSON with `image_data` (base64) and `mime_type` (e.g. `image/jpeg`).                          |
 | `bytes`             | The image file itself, as an attachment, with its own Content-Type.                           |
-| `url`               | JSON with `image_name` and `url`. The image is saved on the server before the answer is sent; fetch it from `url` (`/censored/<name>`). |
+| `url`               | JSON with `image_name` and `url`. The image is saved on the server before the answer is sent; fetch it from `url` (`/censored/<name>`). It is [removed](#stored-files) once it has not been fetched for `server_file_retention_hours` (24 by default); after that the URL gives a `404`. |
 
 The JSON answers look like this:
 
@@ -255,9 +257,10 @@ The response has these headers:
 | `X-Video-Duration`     | Duration of the uploaded video in seconds.                          |
 | `X-Video-Width`, `X-Video-Height` | Size of the uploaded video in pixels. A `gif` output is scaled to 480 pixels wide and 12 fps, so it can differ. |
 
-Uploaded and downloaded videos are kept in `data/server/uncensored/` and censored videos in `data/server/censored/`. When a name is taken,
-`_1`, `_2`, ... is added (`clip.mp4`, `clip_1.mp4`, ...), so requests never overwrite each other's files. Detections
-are cached per video content, so sending the same video again is faster.
+The uploaded (or downloaded) video is saved in `data/server/uncensored/` and the censored one in
+`data/server/censored/`, under a unique name: when a name is taken, `_1`, `_2`, ... is added (`clip.mp4`,
+`clip_1.mp4`, ...), so requests never overwrite each other's files. Both files are removed once the response is sent
+(or the request fails). Detections are cached per video content, so sending the same video again is faster.
 
 The video is encoded as H.264 (VP9 for `webm`). The audio is kept as it is when the format does not change (and always
 for `mkv`); otherwise it is re-encoded to AAC (`mp4`, `m4v`, `mov`), Opus (`webm`) or MP3 (`avi`). A `gif` has no audio.
@@ -286,7 +289,8 @@ curl http://localhost:8443/videos/3f2a.../result -o clip_censored.mp4
 
 Videos are censored one at a time, in the order they were submitted, from both `/censor_video` and `/videos`.
 A finished job (done, failed or cancelled) is kept for **1 hour**, then the job and its files (the uploaded and the
-censored video) are removed. Jobs are kept in memory: restarting the server forgets them (their files stay).
+censored video) are removed. Jobs are kept in memory: restarting the server forgets them; their files are then
+removed like other [unused files](#stored-files).
 
 ### POST /videos
 
@@ -493,6 +497,44 @@ Whether the server can censor, and what it is busy with. Status `200` when the p
 - Videos are censored one at a time (from `/censor_video` and [video jobs](#video-jobs)): `running_video_jobs` is 0 or 1,
   `waiting_video_jobs` counts the ones waiting.
 - `open_frame_streams` is the number of open [`/censor_frame`](#get-censor_frame) connections.
+
+## Stored files
+
+The server keeps files in `data/server/`: uploaded and downloaded originals (`uncensored/`), censored images
+(`censored/`), the files of [video jobs](#video-jobs), and debug output (`debug/`, with `--debug`). The detection
+cache is separate (see [`/cache`](#get-cache)).
+
+A file is removed once it has not been used for `server_file_retention_hours` (in
+[config.yml](config.md#http-server), 24 by default; `0` keeps files forever). Using a file means writing it,
+requesting the same image again, or fetching a censored image from `/censored/<name>`, so an image a page keeps
+showing is kept. The server looks for unused files when it starts and every 10 minutes. Files of video jobs are left
+to the jobs, which remove them 1 hour after they finish; files that a restart left behind are removed like any other.
+
+`/censor_video` removes its files straight away, once the video is sent.
+
+## GET /storage
+
+The files the server keeps, per folder of `data/server/`:
+
+```json
+{
+  "status": "success",
+  "server_dir": "data/server",
+  "retention_hours": 24,
+  "folders": {"censored": {"files": 120, "bytes": 31457280}, "uncensored": {"files": 118, "bytes": 30408704}},
+  "files": 238,
+  "bytes": 61865984
+}
+```
+
+## DELETE /storage
+
+Removes every file in `data/server/` straight away, except the files of video jobs the server still knows (remove
+those with [`DELETE /videos/<id>`](#delete-videosid)). Censored images that pages still show then give a `404`.
+
+```json
+{"status": "success", "deleted_files": 238, "deleted_bytes": 61865984}
+```
 
 ## GET /cache
 

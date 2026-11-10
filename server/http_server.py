@@ -23,19 +23,20 @@ from loguru import logger
 import constants
 from core.backend import cc
 
-from app.config import CensorConfigError
+from app.config import CONFIG, CensorConfigError
 
 from . import request_reader as rr
 from .censor_config_schema import censor_config_schema
 from .errors import (ApiError, CONFIG_NOT_ALLOWED, INTERNAL_ERROR, INVALID_CONFIG, INVALID_REQUEST, INVALID_VIDEO,
                      JOB_FAILED, NOT_FOUND, NOT_READY, PROCESSING_FAILED, error_body, error_response)
 from . import helpers
-from .helpers import (check_censor_config, clear_cache, get_cache_info, get_default_censor_config,
+from .helpers import (_relative, check_censor_config, clear_cache, get_cache_info, get_default_censor_config,
                       get_health, get_labels, get_profile, get_sticker_file, get_stickers, inspect_censor_config,
                       make_video_job, start_pipeline, stop_pipeline, submit_censoring_job, submit_detection_job,
                       submit_video_job, unique_path, wait_for_job)
 from .response_constructor import construct_body, construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH, UPLOAD_DIR
+from . import server_config, storage
 from .utils import np_to_bytes
 from .video_jobs import VideoJobRecord, video_jobs
 
@@ -427,13 +428,16 @@ async def censor_video(request):
     info = await asyncio.to_thread(prepare_video, vr)
 
     output_path, cache_dir = reserve_output(vr)
-    result = await submit_video_job(video_path=vr.path, output_path=output_path, censor_config=vr.config,
-                                    early_exit=False, cache_dir=cache_dir)
-    if not result.success:
+    try:
+        result = await submit_video_job(video_path=vr.path, output_path=output_path, censor_config=vr.config,
+                                        early_exit=False, cache_dir=cache_dir)
+        if not result.success:
+            raise ApiError(f"Censoring failed: {result.error}", PROCESSING_FAILED, 500)
+        return await stream_video(request, Path(result.result), vr.video_format, info, elapsed_ms(started))
+    finally:
+        # nothing refers to them once the video is sent (its detections stay in the cache)
+        vr.remove_input()
         output_path.unlink(missing_ok=True)
-        raise ApiError(f"Censoring failed: {result.error}", PROCESSING_FAILED, 500)
-
-    return await stream_video(request, Path(result.result), vr.video_format, info, elapsed_ms(started))
 
 
 # -------------------------------------- video jobs --------------------------------------
@@ -504,6 +508,41 @@ async def delete_video_job(request):
     """Cancel a video job if it has not finished, and remove it and its files."""
     record = video_jobs.delete(request.match_info['id'])
     return web.json_response({'status': 'success', 'job': record.to_dict()})
+
+
+# -------------------------------------- stored files --------------------------------------
+
+async def censored_file(request):
+    """A censored image saved for expected_response 'url'. Fetching it counts as a use (see storage.py)."""
+    root = CENSORED_PATH.resolve()
+    path = (root / request.match_info['name']).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        return error_response(f"No censored file '{request.match_info['name']}'. Unused files are removed after "
+                              f"{CONFIG.server_file_retention_hours:g} hours.", NOT_FOUND, 404)
+    storage.touch(path)
+    return web.FileResponse(path)
+
+
+@api_handler
+async def storage_info(request):
+    """Files and bytes the server keeps, per folder of data/server/."""
+    info = await asyncio.to_thread(storage.storage_info)
+    return web.json_response({'status': 'success', 'server_dir': _relative(server_config.SERVER_DIR),
+                              'retention_hours': CONFIG.server_file_retention_hours, **info})
+
+
+@api_handler
+async def delete_storage(request):
+    """Remove every file the server keeps, except those of the video jobs it still knows."""
+    result = await asyncio.to_thread(storage.remove_files, None, video_jobs.files())
+    return web.json_response({'status': 'success', **result})
+
+
+async def storage_context(app):
+    """Removes unused files at startup and then every few minutes."""
+    sweeper = asyncio.create_task(storage.sweep_periodically(video_jobs.files))
+    yield
+    sweeper.cancel()
 
 
 async def video_jobs_context(app):
@@ -835,6 +874,7 @@ async def init_app():
     """Initialize aiohttp application"""
     app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB max
     app.cleanup_ctx.append(video_jobs_context)
+    app.cleanup_ctx.append(storage_context)
 
     # Configure CORS
     cors = aiohttp_cors.setup(app, defaults={
@@ -870,7 +910,9 @@ async def init_app():
     app.router.add_get('/stickers', stickers)
     app.router.add_get('/stickers/{path:.+}', sticker_file)
 
-    app.router.add_static('/censored', path=CENSORED_PATH)
+    app.router.add_get('/storage', storage_info)
+    app.router.add_delete('/storage', delete_storage)
+    app.router.add_get('/censored/{name:.+}', censored_file)
     app.router.add_static('/assets', path=str(constants.assets_path))
 
     # Apply CORS to all routes
