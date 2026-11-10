@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import subprocess
+import threading
 import uuid
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, wait
@@ -22,6 +23,10 @@ from .pipeline_config import load_pipeline_config
 
 def _optional_str(value: Any) -> Optional[str]:
     return None if value is None else str(value)
+
+
+class JobCancelled(RuntimeError):
+    """A VideoJob was cancelled while it ran."""
 
 
 _H264 = ['-c:v', 'libx264', '-crf', '21', '-preset', 'veryfast']
@@ -65,6 +70,49 @@ class VideoJob:
         self._skipped = False
         self._error: Optional[str] = None
         self._result: Optional[str] = None
+
+        # Progress, updated while VideoPipeline.submit() runs (Python backend only; censor_core 2.0 has none).
+        self._cancelled = threading.Event()
+        self._phase: Optional[str] = None   # None before it starts, then one of PHASES
+        self._frames_done = 0               # of the current phase
+        self._frames_total = 0
+
+    # ------------------------------------ progress (Python backend only) ------------------------------------
+    PHASES = ('detecting', 'censoring', 'encoding', 'done')
+    """detecting: running the models on the frames that need it; censoring: drawing the censor on every frame;
+    encoding: writing the output file; done: finished (also after an error or cancel)."""
+
+    @property
+    def phase(self) -> Optional[str]:
+        return self._phase
+
+    @property
+    def frames_done(self) -> int:
+        """Frames done in the current phase."""
+        return self._frames_done
+
+    @property
+    def frames_total(self) -> int:
+        """Frames in the current phase: the frames that need detection, or all frames when censoring. 0 when
+        unknown (encoding) or when there is nothing to do (every frame came from the cache)."""
+        return self._frames_total
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def cancel(self) -> None:
+        """Stop the job as soon as possible, also while it runs. It then fails with the error 'cancelled'."""
+        self._cancelled.set()
+
+    def _start_phase(self, phase: str, total: int = 0) -> None:
+        self._frames_done = 0
+        self._frames_total = int(total)
+        self._phase = phase
+
+    def _check_cancelled(self) -> None:
+        if self._cancelled.is_set():
+            raise JobCancelled("cancelled")
 
     @property
     def config(self) -> None:
@@ -182,11 +230,13 @@ class VideoPipeline:
         output = Path(job.output_path)
         avi_path = Path(job.avi_path) if job.avi_path else output.parent / f"{output.stem}_tmp.avi"
         try:
+            job._check_cancelled()
             self._submit(job, avi_path)
         except Exception as e:
             job._success = False
             job._error = str(e) or type(e).__name__
         finally:
+            job._phase = 'done'
             try:
                 avi_path.unlink(missing_ok=True)  # never leave the temporary AVI behind
             except OSError:
@@ -233,6 +283,8 @@ class VideoPipeline:
         finally:
             cap.release()
 
+        job._check_cancelled()
+        job._start_phase('encoding')
         if Path(job.output_path).suffix.lower() == '.gif':
             self._write_gif(avi_path, Path(job.output_path))
         else:
@@ -244,6 +296,7 @@ class VideoPipeline:
     # ------------------------------------ detection pass ------------------------------------
     def _run_detection(self, job: VideoJob, cap: cv2.VideoCapture, video_fps: float, num_frames: int,
                        cache: VideoCache, fingerprints: dict[str, str]) -> None:
+        job._start_phase('detecting')
         censor_fps = job.censor_fps
         if censor_fps <= 0 or censor_fps > video_fps:
             censor_fps = video_fps
@@ -255,6 +308,7 @@ class VideoPipeline:
         # Frames whose cached detections lack a stage this config needs.
         needed = [fid for fid in censor_frames(censor_fps, video_fps, num_frames)
                   if graph.missing(plan, cached_detections(cache.get(fid, {}), fingerprints), config)]
+        job._frames_total = len(needed)
         if not needed:
             return
 
@@ -286,7 +340,13 @@ class VideoPipeline:
         step = max(1, num_frames * 5 // 100)
         next_update, completed = step, 0
         while in_flight:
-            done, _ = wait([h._future for h in in_flight], return_when=FIRST_COMPLETED)
+            if job.cancelled:
+                for h in in_flight:
+                    h.job.cancel()
+                for h in in_flight:
+                    h.wait()  # let in-flight frames stop before failing
+                raise JobCancelled("cancelled")
+            done, _ = wait([h._future for h in in_flight], return_when=FIRST_COMPLETED, timeout=0.5)
             for handle in [h for h in in_flight if h._future in done]:
                 fid = in_flight.pop(handle)
                 frame_job = handle.wait()
@@ -296,6 +356,7 @@ class VideoPipeline:
                     raise RuntimeError(f"detection failed on frame {fid}: {frame_job.error or 'unknown error'}")
                 update_cache(cache.setdefault(fid, {}), frame_job._detections, fingerprints)
                 completed += 1
+                job._frames_done = completed
                 if completed >= next_update:
                     print(f"Frames done: {completed}/{len(needed)}", flush=True)
                     next_update += step
@@ -318,9 +379,13 @@ class VideoPipeline:
         frames = sorted(cache)
         cursor = 0
         live: deque[Box] = deque()
-        broken = False
+        broken = cancelled = False
+        job._start_phase('censoring', num_frames)
         try:
             for i in range(num_frames):
+                if job.cancelled:
+                    cancelled = True
+                    break
                 ok, frame = cap.read()
                 if not ok:
                     break
@@ -342,6 +407,7 @@ class VideoPipeline:
                 except (BrokenPipeError, OSError):
                     broken = True
                     break
+                job._frames_done = i + 1
         finally:
             try:
                 proc.stdin.close()
@@ -349,6 +415,8 @@ class VideoPipeline:
                 broken = True
             proc.wait()
 
+        if cancelled:
+            raise JobCancelled("cancelled")
         if proc.returncode != 0 or broken:
             err = proc.stderr.read().decode(errors='replace').strip() if proc.stderr else ''
             raise RuntimeError(f"ffmpeg failed (status {proc.returncode}) writing {avi_path}: {err}")

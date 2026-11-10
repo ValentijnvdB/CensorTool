@@ -5,10 +5,11 @@ import functools
 import hashlib
 import json
 import ssl
+import threading
 import time
 import traceback
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,14 +28,16 @@ from app.config import CensorConfigError
 from . import request_reader as rr
 from .censor_config_schema import censor_config_schema
 from .errors import (ApiError, CONFIG_NOT_ALLOWED, INTERNAL_ERROR, INVALID_CONFIG, INVALID_REQUEST, INVALID_VIDEO,
-                     NOT_FOUND, PROCESSING_FAILED, error_body, error_response)
-from .helpers import (activity, check_censor_config, clear_cache, get_cache_info, get_default_censor_config,
+                     JOB_FAILED, NOT_FOUND, NOT_READY, PROCESSING_FAILED, error_body, error_response)
+from . import helpers
+from .helpers import (check_censor_config, clear_cache, get_cache_info, get_default_censor_config,
                       get_health, get_labels, get_profile, get_sticker_file, get_stickers, inspect_censor_config,
-                      start_pipeline, stop_pipeline, submit_censoring_job, submit_detection_job, submit_video_job,
-                      unique_path, wait_for_job)
+                      make_video_job, start_pipeline, stop_pipeline, submit_censoring_job, submit_detection_job,
+                      submit_video_job, unique_path, wait_for_job)
 from .response_constructor import construct_body, construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH, UPLOAD_DIR
 from .utils import np_to_bytes
+from .video_jobs import VideoJobRecord, video_jobs
 
 
 def api_handler(handler):
@@ -277,20 +280,45 @@ def output_video_format(filename: str, requested: str | None) -> str:
     return fmt if fmt in VIDEO_FORMATS else DEFAULT_VIDEO_FORMAT
 
 
-@api_handler
-async def censor_video(request):
-    """Censor a video in one go."""
-    started = time.perf_counter()
-    reader = await request.multipart()
-    config = None
-    requested_format = None
+@dataclass
+class VideoRequest:
+    """The parts of a /censor_video or POST /videos request."""
+    config: dict | None = None
+    requested_format: str | None = None
     filename: str | None = None
     video_url: str | None = None
-    path: Path | None = None
-    digest = hashlib.sha256()
+    path: Path | None = None            # the uploaded (or, once downloaded, the downloaded) video
+    digest: Any = field(default_factory=hashlib.sha256)
+    stop: threading.Event = field(default_factory=threading.Event)  # set to stop a download
 
+    @property
+    def name(self) -> str:
+        if self.filename:
+            return self.filename
+        if self.video_url is not None:
+            return rr.filename_from_url(self.video_url, DEFAULT_VIDEO_NAME)
+        return DEFAULT_VIDEO_NAME
+
+    @property
+    def video_format(self) -> str:
+        return output_video_format(self.name, self.requested_format)
+
+    def remove_input(self) -> None:
+        if self.path is not None:
+            self.path.unlink(missing_ok=True)
+
+
+async def read_video_request(request) -> VideoRequest:
+    """
+    Read the parts of a video request, saving an uploaded video. A video_url is not downloaded yet.
+
+    :raises ApiError: (400) if the request is not valid; an uploaded video is removed then.
+    """
+    if not request.content_type.startswith('multipart/'):
+        raise ApiError("Send the video as a multipart/form-data request.")
+    reader = await request.multipart()
+    vr = VideoRequest()
     try:
-        # Receive the video, or the URL to download it from
         while True:
             part = await reader.next()
             if part is None: break
@@ -299,77 +327,86 @@ async def censor_video(request):
                     config = json.loads(await part.text())
                 except json.JSONDecodeError as e:
                     raise ApiError(f"'config' is not valid JSON: {e}", INVALID_CONFIG) from None
-                config = check_censor_config(config)
+                vr.config = check_censor_config(config)
             elif part.name == 'filename':
-                filename = await part.text()
-                if not is_plain_filename(filename):
-                    raise ApiError(f"Invalid filename '{filename}'.")
+                vr.filename = await part.text()
+                if not is_plain_filename(vr.filename):
+                    raise ApiError(f"Invalid filename '{vr.filename}'.")
             elif part.name == 'format':
                 try:
-                    requested_format = parse_video_format(await part.text())
+                    vr.requested_format = parse_video_format(await part.text())
                 except ValueError as e:
                     raise ApiError(str(e)) from None
             elif part.name == 'video_url':
-                video_url = (await part.text()).strip()
-                rr.check_url_allowed(video_url, resolve=False)  # fail early; checked fully when downloading
+                vr.video_url = (await part.text()).strip()
+                rr.check_url_allowed(vr.video_url, resolve=False)  # fail early; checked fully when downloading
             elif part.name == 'video':
-                if path is not None:
+                if vr.path is not None:
                     raise ApiError("Send one 'video' part.")
-                path = unique_path(UPLOAD_DIR, filename or DEFAULT_VIDEO_NAME)
-                async with aiofiles.open(path, mode='wb') as f:
+                if vr.filename is None and part.filename and is_plain_filename(part.filename):
+                    vr.filename = part.filename  # the name the file was uploaded with
+                vr.path = unique_path(UPLOAD_DIR, vr.filename or DEFAULT_VIDEO_NAME)
+                async with aiofiles.open(vr.path, mode='wb') as f:
                     while True:
                         chunk = await part.read_chunk()
                         if not chunk: break
-                        digest.update(chunk)
+                        vr.digest.update(chunk)
                         await f.write(chunk)
 
-        if path is not None and video_url is not None:
+        if vr.path is not None and vr.video_url is not None:
             raise ApiError("Send either a 'video' or a 'video_url' part, not both.")
-        if video_url is not None:
-            # parts may come in any order, so the URL is downloaded once all of them are read
-            filename = filename or rr.filename_from_url(video_url, DEFAULT_VIDEO_NAME)
-            path = unique_path(UPLOAD_DIR, filename)
-            await asyncio.to_thread(rr.download_video, video_url, path, digest)
-        if path is None:
+        if vr.path is None and vr.video_url is None:
             raise ApiError("No video: send the video file as the 'video' part, or its URL as 'video_url'.")
-        if path.stat().st_size == 0:
+    except Exception:
+        vr.remove_input()
+        raise
+    return vr
+
+
+def prepare_video(vr: VideoRequest) -> VideoInfo:
+    """
+    Download the video of a video_url request, and check that the video can be read. Blocking: run it in a thread.
+
+    :raises ApiError: if the download fails or the video is empty or unreadable; the video is removed then.
+    """
+    try:
+        if vr.video_url is not None and vr.path is None:
+            vr.path = unique_path(UPLOAD_DIR, vr.name)
+            rr.download_video(vr.video_url, vr.path, vr.digest, stop=vr.stop)
+        if vr.path.stat().st_size == 0:
             raise ApiError("The video is empty.")
-        info = await asyncio.to_thread(read_video_info, path)
+        info = read_video_info(vr.path)
         if info.width == 0 or info.height == 0:
             raise ApiError("The video could not be read: it is not a supported video.", INVALID_VIDEO)
+        return info
     except Exception:
-        if path is not None:
-            path.unlink(missing_ok=True)
+        vr.remove_input()
         raise
 
-    # Censor the video
-    video_format = output_video_format(filename or DEFAULT_VIDEO_NAME, requested_format)
-    output_path = unique_path(CENSORED_PATH, path.with_suffix('.' + video_format).name)
+
+def reserve_output(vr: VideoRequest) -> tuple[Path, Path]:
+    """Where the censored video goes (a reserved, unique name), and the cache folder for its detections."""
+    output_path = unique_path(CENSORED_PATH, vr.path.with_suffix('.' + vr.video_format).name)
     # cached per content, so a different video uploaded under a used name never gets the old detections
-    cache_dir = CACHE_DIR / 'videos' / digest.hexdigest()[:32]
-    result = await submit_video_job(video_path=path, output_path=output_path, censor_config=config, early_exit=False,
-                                    cache_dir=cache_dir)
-    if not result.success:
-        output_path.unlink(missing_ok=True)
-        raise ApiError(f"Censoring failed: {result.error}", PROCESSING_FAILED, 500)
+    cache_dir = CACHE_DIR / 'videos' / vr.digest.hexdigest()[:32]
+    return output_path, cache_dir
 
-    output_path = Path(result.result)
 
-    # Stream the modified video back
-    response = web.StreamResponse(
-        status=200,
-        reason='OK',
-        headers={
-            'Content-Type': VIDEO_FORMATS[video_format],
-            'Content-Disposition': f'attachment; filename="{output_path.name}"',
-            'X-Processing-Time-Ms': str(elapsed_ms(started)),
-            'X-Frame-Count': str(info.frames),
-            'X-Video-Fps': f"{info.fps:.3f}",
-            'X-Video-Duration': f"{info.duration:.3f}",
-            'X-Video-Width': str(info.width),
-            'X-Video-Height': str(info.height),
-        }
-    )
+async def stream_video(request, output_path: Path, video_format: str, info: VideoInfo,
+                       processing_ms: int | None) -> web.StreamResponse:
+    """Stream a censored video back, with the headers describing it."""
+    headers = {
+        'Content-Type': VIDEO_FORMATS[video_format],
+        'Content-Disposition': f'attachment; filename="{output_path.name}"',
+        'X-Frame-Count': str(info.frames),
+        'X-Video-Fps': f"{info.fps:.3f}",
+        'X-Video-Duration': f"{info.duration:.3f}",
+        'X-Video-Width': str(info.width),
+        'X-Video-Height': str(info.height),
+    }
+    if processing_ms is not None:
+        headers['X-Processing-Time-Ms'] = str(processing_ms)
+    response = web.StreamResponse(status=200, reason='OK', headers=headers)
     await response.prepare(request)
 
     async with aiofiles.open(output_path, mode='rb') as f:
@@ -380,6 +417,101 @@ async def censor_video(request):
             await response.write(chunk)
 
     return response
+
+
+@api_handler
+async def censor_video(request):
+    """Censor a video in one go."""
+    started = time.perf_counter()
+    vr = await read_video_request(request)
+    info = await asyncio.to_thread(prepare_video, vr)
+
+    output_path, cache_dir = reserve_output(vr)
+    result = await submit_video_job(video_path=vr.path, output_path=output_path, censor_config=vr.config,
+                                    early_exit=False, cache_dir=cache_dir)
+    if not result.success:
+        output_path.unlink(missing_ok=True)
+        raise ApiError(f"Censoring failed: {result.error}", PROCESSING_FAILED, 500)
+
+    return await stream_video(request, Path(result.result), vr.video_format, info, elapsed_ms(started))
+
+
+# -------------------------------------- video jobs --------------------------------------
+
+@api_handler
+async def create_video_job(request):
+    """Start censoring a video in the background; poll GET /videos/{id} and fetch GET /videos/{id}/result."""
+    video_jobs.check_capacity()  # before receiving the video
+    vr = await read_video_request(request)
+    info = None
+    if vr.video_url is None:  # an upload: check it now, so a bad video is a 400 straight away
+        info = await asyncio.to_thread(prepare_video, vr)
+
+    async def prepare(record: VideoJobRecord):
+        if info is not None:
+            record.info = info
+        else:
+            download = asyncio.ensure_future(asyncio.to_thread(prepare_video, vr))
+            try:
+                record.info = await asyncio.shield(download)
+            except asyncio.CancelledError:
+                vr.stop.set()  # stop the download, and remove what it got
+                await asyncio.gather(download, return_exceptions=True)
+                vr.remove_input()
+                raise
+        record.input_path = vr.path
+        record.output_path, cache_dir = reserve_output(vr)
+        return make_video_job(vr.path, record.output_path, vr.config, cache_dir)
+
+    try:
+        record = video_jobs.create(vr.video_format, VIDEO_FORMATS[vr.video_format], vr.video_url is not None,
+                                   prepare)
+    except ApiError:
+        vr.remove_input()
+        raise
+    return web.json_response({'status': 'success', 'job': record.to_dict()}, status=202,
+                             headers={'Location': f'/videos/{record.id}'})
+
+
+@api_handler
+async def list_video_jobs(request):
+    """Every video job, oldest first."""
+    return web.json_response({'status': 'success', 'jobs': [r.to_dict() for r in video_jobs.all()]})
+
+
+@api_handler
+async def get_video_job(request):
+    """The state and progress of a video job."""
+    return web.json_response({'status': 'success', 'job': video_jobs.get(request.match_info['id']).to_dict()})
+
+
+@api_handler
+async def get_video_job_result(request):
+    """The censored video of a finished job."""
+    record = video_jobs.get(request.match_info['id'])
+    state = record.current_state
+    if state in ('failed', 'cancelled'):
+        reason = f": {record.error}" if record.error else "."
+        raise ApiError(f"Video job {record.id} {state}{reason}", JOB_FAILED, 409)
+    if state != 'done':
+        raise ApiError(f"Video job {record.id} is not done yet ({state}).", NOT_READY, 409)
+    processing_ms = record.to_dict()['processing_ms']
+    return await stream_video(request, record.output_path, record.video_format, record.info, processing_ms)
+
+
+@api_handler
+async def delete_video_job(request):
+    """Cancel a video job if it has not finished, and remove it and its files."""
+    record = video_jobs.delete(request.match_info['id'])
+    return web.json_response({'status': 'success', 'job': record.to_dict()})
+
+
+async def video_jobs_context(app):
+    """Removes expired jobs while the server runs, and stops the jobs when it stops."""
+    expirer = asyncio.create_task(video_jobs.expire_periodically())
+    yield
+    expirer.cancel()
+    await video_jobs.cancel_all()
 
 
 @api_handler
@@ -615,11 +747,11 @@ async def censor_frame(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    activity.open_frame_streams += 1
+    helpers.activity.open_frame_streams += 1
     try:
         await FrameStream(ws).run()
     finally:
-        activity.open_frame_streams -= 1
+        helpers.activity.open_frame_streams -= 1
     return ws
 
 
@@ -702,6 +834,7 @@ async def sticker_file(request):
 async def init_app():
     """Initialize aiohttp application"""
     app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB max
+    app.cleanup_ctx.append(video_jobs_context)
 
     # Configure CORS
     cors = aiohttp_cors.setup(app, defaults={
@@ -719,6 +852,11 @@ async def init_app():
     app.router.add_post('/detect_features', detect_features)
     app.router.add_post('/censor_video', censor_video)
     app.router.add_get('/video_formats', video_formats)
+    app.router.add_post('/videos', create_video_job)
+    app.router.add_get('/videos', list_video_jobs)
+    app.router.add_get('/videos/{id}', get_video_job)
+    app.router.add_delete('/videos/{id}', delete_video_job)
+    app.router.add_get('/videos/{id}/result', get_video_job_result)
 
     app.router.add_get('/censor_frame', censor_frame)
 

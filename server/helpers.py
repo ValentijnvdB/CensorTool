@@ -36,12 +36,21 @@ _started_at: float | None = None
 _default_censor_config: dict | None = None
 
 
+@dataclass(eq=False)
+class VideoTicket:
+    """A video job and its place in the video queue."""
+    job: Any                    # cc.VideoJob
+    state: str = 'new'          # new | queued | running | finished
+    started_at: float | None = None     # time.time() when it started running
+    finished_at: float | None = None
+
+
 @dataclass
 class _Activity:
     """What the server is busy with, for GET /health."""
     image_jobs: list = field(default_factory=list)  # handles of submitted image jobs; finished ones are pruned
-    video_jobs_running: int = 0
-    video_jobs_waiting: int = 0
+    video_queue: list[VideoTicket] = field(default_factory=list)  # waiting for their turn, in order
+    video_running: VideoTicket | None = None
     open_frame_streams: int = 0
 
     def pending_image_jobs(self) -> int:
@@ -92,8 +101,8 @@ def get_health() -> dict:
         'backend': backend.name() if running else None,
         'uptime_seconds': round(time.time() - _started_at, 1) if _started_at is not None else 0.0,
         'pending_image_jobs': activity.pending_image_jobs(),
-        'running_video_jobs': activity.video_jobs_running,
-        'waiting_video_jobs': activity.video_jobs_waiting,
+        'running_video_jobs': int(activity.video_running is not None),
+        'waiting_video_jobs': len(activity.video_queue),
         'open_frame_streams': activity.open_frame_streams,
     }
 
@@ -302,22 +311,18 @@ def unique_path(directory: Path, name: str) -> Path:
             i += 1
 
 
-async def submit_video_job(video_path: Path, output_path: Path, early_exit: bool, censor_config: dict | None,
-                           cache_dir: Path | None = None) -> cc.VideoJob:
+def make_video_job(video_path: Path, output_path: Path, censor_config: dict | None, cache_dir: Path | None = None,
+                   early_exit: bool = False) -> cc.VideoJob:
     """
-    Censor a video (or GIF) in a thread, one at a time. Other requests are answered meanwhile.
+    A video job for the video pipeline.
 
+    :param censor_config: None for the profile's.
     :param cache_dir: where its detections are cached; default the server's cache folder.
     """
-    global _video_lock
-    if _video_lock is None:
-        _video_lock = asyncio.Lock()
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # never the output itself, which it would be for an .avi output
     avi_path = output_path.parent / f"{output_path.stem}.{uuid.uuid4().hex[:8]}.tmp.avi"
-
-    job = cc.VideoJob(
+    return cc.VideoJob(
         job_id=video_path.stem,
         video_path=str(video_path),
         output_path=str(output_path),
@@ -329,20 +334,56 @@ async def submit_video_job(video_path: Path, output_path: Path, early_exit: bool
         config=censor_config if censor_config is not None else _default_censor_config,
     )
 
-    activity.video_jobs_waiting += 1
-    waiting = True
+
+def queue_position(ticket: VideoTicket) -> int | None:
+    """1 for the next video to run, 2 after that, ...; None when it is not waiting."""
+    try:
+        return activity.video_queue.index(ticket) + 1
+    except ValueError:
+        return None
+
+
+async def run_video_job(ticket: VideoTicket) -> cc.VideoJob:
+    """
+    Censor a video in a thread, one video at a time, in the order they are submitted. Other requests are answered
+    meanwhile. Cancelling the awaiting task takes a waiting video out of the queue; a running one is stopped with
+    ticket.job.cancel() (Python backend only).
+    """
+    global _video_lock
+    if _video_lock is None:
+        _video_lock = asyncio.Lock()  # FIFO: waiters get the lock in the order they asked for it
+
+    ticket.state = 'queued'
+    activity.video_queue.append(ticket)
     try:
         async with _video_lock:
-            activity.video_jobs_waiting -= 1
-            waiting = False
-            activity.video_jobs_running += 1
+            activity.video_queue.remove(ticket)
+            ticket.state = 'running'
+            ticket.started_at = time.time()
+            activity.video_running = ticket
+            done = asyncio.ensure_future(asyncio.to_thread(_video_pipeline.submit, ticket.job))
             try:
-                return await asyncio.to_thread(_video_pipeline.submit, job)
+                return await asyncio.shield(done)
+            except asyncio.CancelledError:
+                # a thread cannot be interrupted: ask the job to stop, and keep the lock until it has
+                if hasattr(ticket.job, 'cancel'):
+                    ticket.job.cancel()
+                await done
+                raise
             finally:
-                activity.video_jobs_running -= 1
+                activity.video_running = None
     finally:
-        if waiting:  # cancelled while waiting for its turn
-            activity.video_jobs_waiting -= 1
+        if ticket in activity.video_queue:  # cancelled while waiting for its turn
+            activity.video_queue.remove(ticket)
+        ticket.state = 'finished'
+        ticket.finished_at = time.time()
+
+
+async def submit_video_job(video_path: Path, output_path: Path, early_exit: bool, censor_config: dict | None,
+                           cache_dir: Path | None = None) -> cc.VideoJob:
+    """Censor a video (see run_video_job) and wait for it."""
+    job = make_video_job(video_path, output_path, censor_config, cache_dir, early_exit)
+    return await run_video_job(VideoTicket(job))
 
 
 def decode_image(image: bytes) -> np.ndarray:

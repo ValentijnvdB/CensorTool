@@ -642,6 +642,7 @@ class TestCensorVideoFormat:
     def _video_part(data=b"video data"):
         part = MagicMock()
         part.name = "video"
+        part.filename = None
         part.read_chunk = AsyncMock(side_effect=[data, b""])
         return part
 
@@ -774,7 +775,7 @@ class TestCensorVideoUrl:
     @staticmethod
     def downloads(content=b"downloaded video"):
         """Patches download_video to write content."""
-        def fake(url, path, digest=None):
+        def fake(url, path, digest=None, stop=None):
             path.write_bytes(content)
             if digest is not None:
                 digest.update(content)
@@ -832,6 +833,7 @@ class TestCensorVideoUrl:
 
         video = MagicMock()
         video.name = "video"
+        video.filename = None
         video.read_chunk = AsyncMock(side_effect=[b"data", b""])
         url = TestCensorVideoFormat._text_part("video_url", "https://example.com/a.mp4")
         with self.downloads() as download, patch.object(hs, "submit_video_job") as submit:
@@ -857,7 +859,7 @@ class TestCensorVideoUrl:
         from server.errors import ApiError
         upload, _ = dirs
 
-        def fail(url, path, digest=None):
+        def fail(url, path, digest=None, stop=None):
             path.write_bytes(b"partial")
             raise ApiError("Could not download the video: the server answered 404.", "download_failed", 502)
 

@@ -18,7 +18,12 @@ config use the profile's `censor_config.yml`.
 | [`/censor_image`](#post-censor_image)                 | POST (JSON)      | Censor one image.                                  |
 | [`/censor_images`](#post-censor_images)               | POST (JSON)      | Censor several images in one request.              |
 | [`/detect_features`](#post-detect_features)           | POST (JSON)      | Detect features without censoring.                 |
-| [`/censor_video`](#post-censor_video)                 | POST (multipart) | Censor a video or GIF.                             |
+| [`/censor_video`](#post-censor_video)                 | POST (multipart) | Censor a video or GIF and wait for it.             |
+| [`/videos`](#post-videos)                             | POST (multipart) | Start censoring a video or GIF in the background.  |
+| [`/videos`](#get-videos)                              | GET              | All background video jobs.                         |
+| [`/videos/<id>`](#get-videosid)                       | GET              | The state and progress of a video job.             |
+| [`/videos/<id>/result`](#get-videosidresult)          | GET              | The censored video of a finished job.              |
+| [`/videos/<id>`](#delete-videosid)                    | DELETE           | Cancel a video job and remove it.                  |
 | [`/video_formats`](#get-video_formats)                | GET              | The formats `/censor_video` can return.            |
 | [`/censor_frame`](#get-censor_frame)                  | GET (WebSocket)  | Censor a stream of frames in real time.            |
 | [`/health`](#get-health)                              | GET              | Whether the server can censor, and how busy it is. |
@@ -50,7 +55,10 @@ Errors are returned as JSON with a status code, a machine-readable `code` and a 
 | `invalid_config`     | 400    | The censor config is not valid (see [`/censor_config/validate`](#post-censor_configvalidate)). |
 | `config_not_allowed` | 400    | The censor config has a `stickers_dir` or sticker outside `data/stickers`.       |
 | `url_not_allowed`    | 400    | The image or video URL is not `http(s)`, or points to this machine or the local network. |
-| `not_found`          | 404    | No such sticker.                                                                 |
+| `not_found`          | 404    | No such sticker or video job.                                                    |
+| `not_ready`          | 409    | The video job has not finished yet.                                              |
+| `job_failed`         | 409    | The video job failed or was cancelled, so it has no result.                      |
+| `queue_full`         | 429    | Too many video jobs are waiting or running; try again later.                     |
 | `download_failed`    | 502    | The image or video URL could not be downloaded (unknown host, timeout, an HTTP error, larger than 100 MB). |
 | `processing_failed`  | 500    | Censoring or detection failed.                                                   |
 | `internal_error`     | 500    | Anything else.                                                                   |
@@ -220,11 +228,11 @@ Censors a video or a GIF. A `multipart/form-data` request with these parts:
 |-------------|----------|---------------------------------------------------|
 | `video`     | one of   | The video file.                                   |
 | `video_url` | these    | A URL the server downloads the video from, instead of sending the file. |
-| `filename`  | no       | Name of the video, e.g. `clip.mp4`, without folders (`400` otherwise). With `video`, send it before the `video` part. Default: the file name at the end of `video_url`, else `video.mp4`. |
+| `filename`  | no       | Name of the video, e.g. `clip.mp4`, without folders (`400` otherwise). With `video`, send it before the `video` part. Default: the name the file was uploaded with, or the file name at the end of `video_url`, else `video.mp4`. |
 | `config`   | no       | A censor config as JSON text.                     |
 | `format`   | no       | Format of the censored video: `mp4`, `m4v`, `mov`, `mkv`, `webm`, `avi` or `gif` (a leading `.` and capitals are fine; `400` otherwise). Default: the format of `filename`, or `mp4` when that is not one of these. See also [`/video_formats`](#get-video_formats). |
 
-Sending both `video` and `video_url`, or neither, is a `400`, as is an empty video or one that cannot be read
+The request must be `multipart/form-data`. Sending both `video` and `video_url`, or neither, is a `400`, as is an empty video or one that cannot be read
 (`invalid_video`).
 
 `video_url` is downloaded like a `source` image (see [Image requests](#image-requests)): only `http` and `https`
@@ -264,6 +272,103 @@ curl -X POST http://localhost:8443/censor_video \
 curl -X POST http://localhost:8443/censor_video \
      -F video_url=https://example.com/funny.gif -o funny_censored.gif
 ```
+
+## Video jobs
+
+`/censor_video` keeps the request open until the whole video is done. For long videos, censor them in the
+background instead: start a job, poll its progress, then fetch the result.
+
+```
+curl -X POST http://localhost:8443/videos -F video=@clip.mp4          # -> {"job": {"id": "3f2a...", ...}}
+curl http://localhost:8443/videos/3f2a...                             # poll until "state": "done"
+curl http://localhost:8443/videos/3f2a.../result -o clip_censored.mp4
+```
+
+Videos are censored one at a time, in the order they were submitted, from both `/censor_video` and `/videos`.
+A finished job (done, failed or cancelled) is kept for **1 hour**, then the job and its files (the uploaded and the
+censored video) are removed. Jobs are kept in memory: restarting the server forgets them (their files stay).
+
+### POST /videos
+
+Takes the same parts as [`/censor_video`](#post-censor_video) and answers `202 Accepted` straight away with the
+[job](#the-job) and a `Location` header pointing to it:
+
+```json
+{"status": "success", "job": {"id": "3f2a9c...", "state": "queued", "url": "/videos/3f2a9c...", ...}}
+```
+
+- An uploaded video is checked before the answer: a missing, empty or unreadable video is a `400`, as with
+  `/censor_video`.
+- A `video_url` is downloaded in the background (state `downloading`); a failed download makes the job `failed`
+  with code `download_failed` or `url_not_allowed`.
+- At most 20 jobs can be downloading, waiting or running at the same time. Beyond that, the request is refused with
+  `429` and code `queue_full` before the video is received.
+
+### The job
+
+```json
+{
+  "id": "3f2a9c...",
+  "state": "running",
+  "phase": "censoring",
+  "progress": 0.82,
+  "frames_done": 480,
+  "frames_total": 600,
+  "queue_position": null,
+  "filename": "clip.mp4",
+  "format": "mp4",
+  "content_type": "video/mp4",
+  "video": {"frames": 600, "fps": 30.0, "duration": 20.0, "width": 1280, "height": 720},
+  "created_at": "2026-11-10T11:04:57Z",
+  "started_at": "2026-11-10T11:04:58Z",
+  "finished_at": null,
+  "processing_ms": null,
+  "expires_at": null,
+  "url": "/videos/3f2a9c...",
+  "result_url": null
+}
+```
+
+| Field            | Description |
+|------------------|-------------|
+| `state`          | `downloading` (a `video_url`), `queued` (waiting for its turn), `running`, `done`, `failed` or `cancelled`. |
+| `phase`          | While running: `detecting` (running the models), `censoring` (drawing the censor on every frame) or `encoding` (writing the file); `done` once done. |
+| `progress`       | From `0` to `1`, estimated from the phase and its frames: detecting is 0-0.7, censoring 0.7-0.95, encoding 0.95-1. |
+| `frames_done`, `frames_total` | Frames done in the current phase, and how many it has. Detection only counts the frames that are analysed (`video_censor_fps`) and not cached; `frames_total` is `0` when there is nothing to detect. |
+| `queue_position` | While queued: `1` for the next video to run, `2` after that, ...; otherwise `null`. |
+| `filename`       | Name of the censored video, once the video is there. |
+| `video`          | Frame count, fps, duration (seconds) and size of the uploaded video, once it is there. |
+| `processing_ms`  | Time from start to finish of the censoring, once finished. |
+| `expires_at`     | When the finished job and its files are removed. |
+| `result_url`     | Where to fetch the censored video, once done. |
+| `error`, `code`  | Only when `failed`: why, with an [error code](#errors) such as `processing_failed` or `download_failed`. |
+
+`phase`, `progress`, `frames_done` and `frames_total` need the Python backend. With the C++ backend (`censor_core`
+2.0) they are `null` while the job runs; `state` and `queue_position` still work.
+
+### GET /videos
+
+Every job, oldest first: `{"status": "success", "jobs": [<job>, ...]}`.
+
+### GET /videos/&lt;id&gt;
+
+One job: `{"status": "success", "job": <job>}`. An unknown (or expired) id is a `404`.
+
+### GET /videos/&lt;id&gt;/result
+
+The censored video, streamed back with the same headers as [`/censor_video`](#post-censor_video). It can be fetched
+any number of times until the job expires. Before the job is done the answer is `409` with code `not_ready`; for a
+failed or cancelled job it is `409` with code `job_failed`.
+
+### DELETE /videos/&lt;id&gt;
+
+Removes the job and its files, and answers with the job as it was (`state` is `cancelled` for a job that had not
+finished):
+
+- A job that is downloading or waiting is stopped straight away; it never runs.
+- A running job is stopped within a moment with the Python backend. The C++ backend cannot stop a running video: it
+  runs to the end in the background (other videos wait for it), and its files are removed then.
+- A finished job is removed with its files.
 
 ## GET /video_formats
 
@@ -385,7 +490,8 @@ Whether the server can censor, and what it is busy with. Status `200` when the p
 - `status` is `ok` or `unavailable`.
 - `backend` is `python` or `cpp`.
 - `pending_image_jobs` counts the images and frames being censored or waiting for a worker.
-- Videos are censored one at a time: `running_video_jobs` is 0 or 1, `waiting_video_jobs` counts the ones waiting.
+- Videos are censored one at a time (from `/censor_video` and [video jobs](#video-jobs)): `running_video_jobs` is 0 or 1,
+  `waiting_video_jobs` counts the ones waiting.
 - `open_frame_streams` is the number of open [`/censor_frame`](#get-censor_frame) connections.
 
 ## GET /cache

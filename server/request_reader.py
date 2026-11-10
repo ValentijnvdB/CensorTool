@@ -6,6 +6,7 @@ import binascii
 import ipaddress
 import json
 import socket
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -203,15 +204,18 @@ def download_image(url: str) -> bytes:
     return b''.join(iter_download(url, 'image'))
 
 
-def download_video(url: str, path: Path, digest=None) -> None:
+def download_video(url: str, path: Path, digest=None, stop: threading.Event | None = None) -> None:
     """
     Download a video to path, following redirects only to allowed URLs.
 
     :param digest: a hashlib object that is updated with the contents.
-    :raises ApiError: if a URL is not allowed or the download fails.
+    :param stop: when set, the download stops with an ApiError.
+    :raises ApiError: if a URL is not allowed, the download fails or is stopped.
     """
     with open(path, 'wb') as f:
         for chunk in iter_download(url, 'video'):
+            if stop is not None and stop.is_set():
+                raise ApiError("The download was stopped.", DOWNLOAD_FAILED, 502)
             if digest is not None:
                 digest.update(chunk)
             f.write(chunk)
