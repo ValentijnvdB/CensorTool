@@ -3,15 +3,37 @@ from __future__ import annotations
 
 import json
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 import yaml
 
+_collected_warnings: ContextVar[list[str] | None] = ContextVar('_collected_warnings', default=None)
+
 
 def log_warning(msg: str) -> None:
-    """Prints a config warning to stderr (same format as the C++ backend)."""
+    """
+    Prints a config warning to stderr (same format as the C++ backend), or adds it to the list of an enclosing
+    collect_warnings().
+    """
+    collected = _collected_warnings.get()
+    if collected is not None:
+        collected.append(msg)
+        return
     print(f"[censor_core] WARNING: {msg}", file=sys.stderr, flush=True)
+
+
+@contextmanager
+def collect_warnings() -> Iterator[list[str]]:
+    """Collects the config warnings logged inside the block (in this thread/task) instead of printing them."""
+    collected: list[str] = []
+    token = _collected_warnings.set(collected)
+    try:
+        yield collected
+    finally:
+        _collected_warnings.reset(token)
 
 
 def read_config_file(path: str | Path) -> Any:

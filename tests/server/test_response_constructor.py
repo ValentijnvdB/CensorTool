@@ -3,8 +3,8 @@ Unit tests for server/response_constructor.py
 
 Covers:
   - _construct_bytes_response
-  - _construct_base64_response
-  - _construct_url_response
+  - _base64_body
+  - _url_body
   - construct_response  (dispatcher)
 
 Run with:
@@ -87,101 +87,89 @@ class TestConstructBytesResponse:
 
 
 # ---------------------------------------------------------------------------
-# _construct_base64_response
+# _base64_body
 # ---------------------------------------------------------------------------
 
-class TestConstructBase64Response:
+class TestBase64Body:
 
-    def test_response_body_has_image_data_key(self, png_bytes):
-        from server.response_constructor import _construct_base64_response
+    def test_has_image_data_and_mime_type_only(self, png_bytes):
+        from server.response_constructor import _base64_body
 
-        resp = _construct_base64_response(png_bytes, extension=".png")
-        body = json.loads(resp.body)
-        assert "image_data" in body
-
-    def test_response_body_has_mime_type_key(self, png_bytes):
-        from server.response_constructor import _construct_base64_response
-
-        resp = _construct_base64_response(png_bytes, extension=".png")
-        body = json.loads(resp.body)
-        assert "mime_type" in body
-
-    def test_mime_type_reflects_extension(self, png_bytes):
-        from server.response_constructor import _construct_base64_response
-
-        resp = _construct_base64_response(png_bytes, extension=".png")
-        body = json.loads(resp.body)
-        assert body["mime_type"] == "image/.png"
+        assert set(_base64_body(png_bytes, extension=".png")) == {"image_data", "mime_type"}
 
     def test_image_data_is_valid_base64(self, png_bytes):
-        from server.response_constructor import _construct_base64_response
+        from server.response_constructor import _base64_body
 
-        resp = _construct_base64_response(png_bytes, extension=".png")
-        body = json.loads(resp.body)
-        decoded = base64.b64decode(body["image_data"])
-        assert decoded == png_bytes
+        assert base64.b64decode(_base64_body(png_bytes, extension=".png")["image_data"]) == png_bytes
 
-    def test_different_extensions_reflected_in_mime(self, png_bytes):
-        from server.response_constructor import _construct_base64_response
+    @pytest.mark.parametrize("extension, expected", [
+        (".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".JPG", "image/jpeg"),
+        (".tiff", "image/tiff"), (".webp", "image/webp"), (".avif", "image/avif"), (".gif", "image/gif"),
+        ("bmp", "image/bmp"),
+    ])
+    def test_mime_type_is_a_real_mime_type(self, png_bytes, extension, expected):
+        from server.response_constructor import _base64_body
 
-        resp_jpg = _construct_base64_response(png_bytes, extension=".jpg")
-        body = json.loads(resp_jpg.body)
-        assert ".jpg" in body["mime_type"]
-
-    def test_no_extra_keys_in_body(self, png_bytes):
-        from server.response_constructor import _construct_base64_response
-
-        resp = _construct_base64_response(png_bytes, extension=".png")
-        body = json.loads(resp.body)
-        assert set(body.keys()) == {"image_data", "mime_type"}
+        assert _base64_body(png_bytes, extension=extension)["mime_type"] == expected
 
 
 # ---------------------------------------------------------------------------
-# _construct_url_response
+# _url_body
 # ---------------------------------------------------------------------------
 
-class TestConstructUrlResponse:
+class TestUrlBody:
 
-    def test_body_has_image_name_key(self, png_bytes, censored_root):
-        from server.response_constructor import _construct_url_response
-
-        path = Path("myimage.png")
-        with patch("server.response_constructor.CENSORED_PATH", censored_root):
-            resp = _construct_url_response(png_bytes, image_path=path)
-
-        body = json.loads(resp.body)
-        assert "image_name" in body
-
-    def test_relative_path_passed_through_unchanged(self, png_bytes, censored_root):
-        from server.response_constructor import _construct_url_response
-
-        path = Path("subfolder/myimage.png")
-        with patch("server.response_constructor.CENSORED_PATH", censored_root):
-            resp = _construct_url_response(png_bytes, image_path=path)
-
-        body = json.loads(resp.body)
-        assert "myimage.png" in body["image_name"]
-
-    def test_absolute_path_made_relative_to_censored_path(self, png_bytes, censored_root):
-        from server.response_constructor import _construct_url_response
-
-        abs_path = censored_root / "myimage.png"
-        with patch("server.response_constructor.CENSORED_PATH", censored_root):
-            resp = _construct_url_response(png_bytes, image_path=abs_path)
-
-        body = json.loads(resp.body)
-        # Should not start with the root prefix, only the relative part
-        assert str(censored_root) not in body["image_name"]
-        assert "myimage.png" in body["image_name"]
-
-    def test_response_is_json(self, png_bytes, censored_root):
-        from server.response_constructor import _construct_url_response
+    def test_has_image_name_and_url(self, censored_root):
+        from server.response_constructor import _url_body
 
         with patch("server.response_constructor.CENSORED_PATH", censored_root):
-            resp = _construct_url_response(png_bytes, image_path=Path("img.png"))
+            body = _url_body(Path("my image.png"))
 
-        # Should not raise
-        json.loads(resp.body)
+        assert body == {"image_name": "my image.png", "url": "/censored/my%20image.png"}
+
+    def test_relative_path_passed_through_unchanged(self, censored_root):
+        from server.response_constructor import _url_body
+
+        with patch("server.response_constructor.CENSORED_PATH", censored_root):
+            body = _url_body(Path("subfolder/myimage.png"))
+
+        assert body["image_name"] == "subfolder/myimage.png"
+
+    def test_absolute_path_made_relative_to_censored_path(self, censored_root):
+        from server.response_constructor import _url_body
+
+        with patch("server.response_constructor.CENSORED_PATH", censored_root):
+            body = _url_body(censored_root / "myimage.png")
+
+        assert body["image_name"] == "myimage.png"
+
+
+# ---------------------------------------------------------------------------
+# info fields
+# ---------------------------------------------------------------------------
+
+class TestInfo:
+
+    INFO = {"width": 4, "height": 3, "processing_ms": 12, "detections": []}
+
+    def test_json_answers_have_status_and_info(self, png_bytes, censored_root):
+        from server.response_constructor import construct_response
+
+        with patch("server.response_constructor.CENSORED_PATH", censored_root):
+            for mode in ("base64", "url"):
+                body = json.loads(construct_response(mode, png_bytes, ".png", image_path=Path("x.png"),
+                                                     info=self.INFO).body)
+                assert body["status"] == "success"
+                assert {k: body[k] for k in self.INFO} == self.INFO
+
+    def test_bytes_answer_sends_info_as_headers(self, png_bytes):
+        from server.response_constructor import construct_response
+
+        resp = construct_response("bytes", png_bytes, ".jpg", name="x.jpg", info=self.INFO)
+        assert resp.content_type == "image/jpeg"
+        assert resp.headers["X-Image-Width"] == "4"
+        assert resp.headers["X-Image-Height"] == "3"
+        assert resp.headers["X-Processing-Time-Ms"] == "12"
 
 
 # ---------------------------------------------------------------------------

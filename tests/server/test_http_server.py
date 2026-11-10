@@ -1,19 +1,15 @@
 """
 Unit tests for server/http_server.py
 
-Covers all three route handlers:
-  - censor_image
-  - detect_features
-  - reset_cache
-
 Run with:
-    pytest test_http_server.py -v
+    pytest tests/server/test_http_server.py -v
 """
 
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
 import pytest
 import pytest_asyncio
 
@@ -28,22 +24,13 @@ def fake_request():
     return AsyncMock()
 
 
-@pytest.fixture()
-def successful_job():
-    """A job whose .success is True and carries a fake image."""
-    job = MagicMock()
-    job.success = True
-    job.image = b"censoredimage"
-    return job
+def image_request(name="photo.png", config=None, expected_response="base64", include_detections=False):
+    from server.request_reader import ImageRequest
+    return ImageRequest(b"img", Path(name), config, expected_response, include_detections)
 
 
-@pytest.fixture()
-def failed_job():
-    """A job whose .success is False with a descriptive error."""
-    job = MagicMock()
-    job.success = False
-    job.error = Exception("pipeline exploded")
-    return job
+def read_request_returning(req):
+    return patch("server.http_server.rr.read_request", AsyncMock(return_value=req))
 
 
 def make_detection(id=0, label="FACE_FEMALE", score=0.92, box=(10, 20, 100, 100),
@@ -57,10 +44,11 @@ def make_detection_submit(detections: list[dict], cached_models=()):
     """Return value of submit_detection_job: (job, handle), where handle.wait() returns the finished job."""
     job = MagicMock()
     job.success = True
-    job.result = {"image": None, "output_path": None,
+    job.result = {"image": np.zeros((30, 40, 3), dtype=np.uint8), "output_path": None,
                   "detections": detections, "cached_models": list(cached_models)}
     handle = MagicMock()
     handle.wait.return_value = job
+    handle.done.return_value = True
     return job, handle
 
 
@@ -70,129 +58,202 @@ def detection_job():
     return make_detection_submit([make_detection()])
 
 
-@pytest.fixture()
-def image_path():
-    return Path("photo.png")
-
-
-@pytest.fixture()
-def fake_response():
-    return MagicMock()
-
-
 # ---------------------------------------------------------------------------
 # censor_image
 # ---------------------------------------------------------------------------
 
 class TestCensorImage:
 
-    @pytest.mark.asyncio
-    async def test_returns_constructed_response_on_success(
-        self, fake_request, successful_job, image_path, fake_response
-    ):
-        from server.http_server import censor_image
-
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_censoring_job", return_value=successful_job):
-                with patch("server.http_server.construct_response", return_value=fake_response):
-                    result = await censor_image(fake_request)
-
-        assert result is fake_response
+    @staticmethod
+    def submit(detections=()):
+        return patch("server.http_server.submit_censoring_job",
+                     return_value=make_detection_submit(list(detections), cached_models=["nudenet"]))
 
     @pytest.mark.asyncio
-    async def test_calls_construct_response_with_correct_args(
-        self, fake_request, successful_job, image_path
-    ):
+    async def test_base64_answer_has_status_size_and_time(self, fake_request):
         from server.http_server import censor_image
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_censoring_job", return_value=successful_job):
-                with patch("server.http_server.construct_response", return_value=MagicMock()) as mock_construct:
-                    await censor_image(fake_request)
+        with read_request_returning(image_request("photo.jpg")), self.submit():
+            result = await censor_image(fake_request)
 
-        mock_construct.assert_called_once_with(
-            expected_response="base64",
-            image=successful_job.image,
-            extension=image_path.suffix,
-            image_path=None,          # no output_path for non-url response
-            name=image_path.name,
-        )
-
-    @pytest.mark.asyncio
-    async def test_output_path_set_for_url_response(
-        self, fake_request, successful_job, image_path
-    ):
-        from server.http_server import censor_image
-
-        censored_path = Path("/data/censored")
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "url")):
-            with patch("server.http_server.CENSORED_PATH", censored_path):
-                with patch("server.http_server.submit_censoring_job", return_value=successful_job) as mock_submit:
-                    with patch("server.http_server.construct_response", return_value=MagicMock()):
-                        await censor_image(fake_request)
-
-        _, output_path_arg, _ = mock_submit.call_args[0]
-        assert output_path_arg == censored_path / image_path.name
-
-    @pytest.mark.asyncio
-    async def test_output_path_is_none_for_base64_response(
-        self, fake_request, successful_job, image_path
-    ):
-        from server.http_server import censor_image
-
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_censoring_job", return_value=successful_job) as mock_submit:
-                with patch("server.http_server.construct_response", return_value=MagicMock()):
-                    await censor_image(fake_request)
-
-        _, output_path_arg, _ = mock_submit.call_args[0]
-        assert output_path_arg is None
-
-    @pytest.mark.asyncio
-    async def test_forwards_censor_config_to_job(self, fake_request, successful_job, image_path):
-        from server.http_server import censor_image
-
-        censor_config = MagicMock()
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, censor_config, "base64")):
-            with patch("server.http_server.submit_censoring_job", return_value=successful_job) as mock_submit:
-                with patch("server.http_server.construct_response", return_value=MagicMock()):
-                    await censor_image(fake_request)
-
-        _, _, config_arg = mock_submit.call_args[0]
-        assert config_arg is censor_config
-
-    @pytest.mark.asyncio
-    async def test_returns_500_when_job_fails(self, fake_request, failed_job, image_path):
-        from server.http_server import censor_image
-
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_censoring_job", return_value=failed_job):
-                result = await censor_image(fake_request)
-
-        assert result.status == 500
         body = json.loads(result.body)
-        assert "error" in body
+        assert body["status"] == "success"
+        assert body["mime_type"] == "image/jpeg"
+        assert (body["width"], body["height"]) == (40, 30)
+        assert isinstance(body["processing_ms"], int)
+        assert "detections" not in body
 
     @pytest.mark.asyncio
-    async def test_returns_500_on_read_request_exception(self, fake_request):
+    async def test_detections_are_opt_in(self, fake_request):
         from server.http_server import censor_image
 
-        with patch("server.http_server.rr.read_request", side_effect=RuntimeError("bad request")):
+        with read_request_returning(image_request(include_detections=True)), self.submit([make_detection()]):
+            result = await censor_image(fake_request)
+
+        body = json.loads(result.body)
+        assert body["detections"][0]["label"] == "FACE_FEMALE"
+        assert body["detections"][0]["box"] == [10.0, 20.0, 100.0, 100.0]
+        assert body["cached_models"] == ["nudenet"]
+
+    @pytest.mark.asyncio
+    async def test_bytes_answer(self, fake_request):
+        from server.http_server import censor_image
+
+        with read_request_returning(image_request("photo.webp", expected_response="bytes")), self.submit():
+            result = await censor_image(fake_request)
+
+        assert result.content_type == "image/webp"
+        assert result.headers["X-Image-Width"] == "40"
+        assert "X-Processing-Time-Ms" in result.headers
+
+    @pytest.mark.asyncio
+    async def test_bytes_answer_with_detections_is_400(self, fake_request):
+        from server.http_server import censor_image
+
+        req = image_request(expected_response="bytes", include_detections=True)
+        with read_request_returning(req), self.submit() as submit:
+            result = await censor_image(fake_request)
+
+        assert result.status == 400
+        submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_url_answer_is_saved_before_answering(self, fake_request, tmp_path):
+        from server.http_server import censor_image
+
+        with read_request_returning(image_request("photo.png", expected_response="url")), self.submit(), \
+                patch("server.http_server.CENSORED_PATH", tmp_path), \
+                patch("server.response_constructor.CENSORED_PATH", tmp_path):
+            result = await censor_image(fake_request)
+
+        body = json.loads(result.body)
+        assert body["image_name"] == "photo.png"
+        assert body["url"] == "/censored/photo.png"
+        assert (tmp_path / "photo.png").read_bytes()[:4] == b"\x89PNG"
+
+    @pytest.mark.asyncio
+    async def test_forwards_censor_config_to_job(self, fake_request):
+        from server.http_server import censor_image
+
+        censor_config = {"features_to_censor": []}
+        with read_request_returning(image_request(config=censor_config)), self.submit() as submit:
+            await censor_image(fake_request)
+
+        assert submit.call_args.args == (b"img", None, censor_config)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("handler", ["censor_image", "detect_features"])
+    @pytest.mark.parametrize("payload", [
+        {"type": "source", "image_url": "https://example.com/anim.GIF"},
+        {"type": "base64", "mime_type": "image/gif", "image_data": "R0lGODlh"},
+        {"type": "base64", "mime_type": "image/png", "image_data": "R0lGODlhAQABAAAAACw="},  # a GIF named .png
+    ])
+    async def test_gifs_are_sent_to_censor_video(self, tmp_path, handler, payload):
+        import server.http_server as hs
+
+        request = AsyncMock()
+        request.content_type = "application/json"
+        request.json = AsyncMock(return_value=payload)
+        with patch("server.request_reader.UPLOAD_DIR", tmp_path), \
+                patch("server.request_reader.requests.get") as download, \
+                patch("server.helpers._image_pipeline", MagicMock()) as pipeline:
+            result = await getattr(hs, handler)(request)
+
+        body = json.loads(result.body)
+        assert result.status == 400
+        assert body["code"] == "use_censor_video" and "/censor_video" in body["error"]
+        download.assert_not_called()
+        pipeline.submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_500_when_job_fails(self, fake_request):
+        from server.http_server import censor_image
+
+        job, handle = make_detection_submit([])
+        job.success = False
+        job.error = "pipeline exploded"
+        with read_request_returning(image_request()), \
+                patch("server.http_server.submit_censoring_job", return_value=(job, handle)):
             result = await censor_image(fake_request)
 
         assert result.status == 500
         body = json.loads(result.body)
-        assert "error" in body
+        assert body["code"] == "processing_failed"
+        assert "pipeline exploded" in body["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_500_on_unexpected_exception(self, fake_request, image_path):
+    async def test_api_errors_keep_their_status_and_code(self, fake_request):
+        from server.errors import ApiError
         from server.http_server import censor_image
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_censoring_job", side_effect=Exception("unexpected")):
-                result = await censor_image(fake_request)
+        with patch("server.http_server.rr.read_request", AsyncMock(side_effect=ApiError("bad", "invalid_image"))):
+            result = await censor_image(fake_request)
+
+        assert result.status == 400
+        assert json.loads(result.body) == {"status": "error", "code": "invalid_image", "error": "bad"}
+
+    @pytest.mark.asyncio
+    async def test_returns_500_on_unexpected_exception(self, fake_request):
+        from server.http_server import censor_image
+
+        with read_request_returning(image_request()), \
+                patch("server.http_server.submit_censoring_job", side_effect=Exception("unexpected")):
+            result = await censor_image(fake_request)
 
         assert result.status == 500
+        assert json.loads(result.body)["code"] == "internal_error"
+
+
+# ---------------------------------------------------------------------------
+# censor_images
+# ---------------------------------------------------------------------------
+
+class TestCensorImages:
+
+    @staticmethod
+    def request(body):
+        request = AsyncMock()
+        request.content_type = "application/json"
+        request.json = AsyncMock(return_value=body)
+        return request
+
+    @pytest.mark.asyncio
+    async def test_each_image_gets_its_own_answer_in_order(self):
+        from server.errors import ApiError
+        from server.http_server import censor_images
+
+        def parse(item, shared):
+            if item == "bad":
+                raise ApiError("No 'image_url' provided.")
+            return image_request(item, **{k: v for k, v in shared.items() if k != "config"})
+
+        with patch("server.http_server.rr.parse_image_request", side_effect=parse), \
+                patch("server.http_server.submit_censoring_job",
+                      side_effect=lambda *a: make_detection_submit([make_detection()])):
+            result = await censor_images(self.request({"images": ["a.png", "bad", "c.jpg"],
+                                                       "include_detections": True}))
+
+        body = json.loads(result.body)
+        assert body["status"] == "success"
+        a, bad, c = body["results"]
+        assert a["status"] == "success" and a["mime_type"] == "image/png" and len(a["detections"]) == 1
+        assert bad == {"status": "error", "code": "invalid_request", "error": "No 'image_url' provided."}
+        assert c["mime_type"] == "image/jpeg"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("body, error", [
+        ({}, "'images' list"),
+        ({"images": []}, "empty"),
+        ({"images": [{}] * 51}, "at most 50"),
+        ({"images": [{}], "expected_response": "bytes"}, "not supported"),
+        ({"images": [{}], "config": {"features_to_censor": []}}, "Invalid censor config"),
+    ])
+    async def test_bad_requests_are_400(self, body, error):
+        from server.http_server import censor_images
+
+        result = await censor_images(self.request(body))
+        assert result.status == 400
+        assert error in json.loads(result.body)["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -202,32 +263,23 @@ class TestCensorImage:
 class TestDetectFeatures:
 
     @pytest.mark.asyncio
-    async def test_returns_success_status(self, fake_request, detection_job, image_path):
+    async def test_returns_success_status_name_and_size(self, fake_request, detection_job):
         from server.http_server import detect_features
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
+        with read_request_returning(image_request("face.jpg")):
             with patch("server.http_server.submit_detection_job", return_value=detection_job):
                 result = await detect_features(fake_request)
 
         body = json.loads(result.body)
         assert body["status"] == "success"
-
-    @pytest.mark.asyncio
-    async def test_returns_correct_file_name(self, fake_request, detection_job):
-        from server.http_server import detect_features
-
-        with patch("server.http_server.rr.read_request", return_value=(b"img", Path("face.jpg"), None, "base64")):
-            with patch("server.http_server.submit_detection_job", return_value=detection_job):
-                result = await detect_features(fake_request)
-
-        body = json.loads(result.body)
         assert body["file_name"] == "face.jpg"
+        assert (body["width"], body["height"]) == (40, 30)
 
     @pytest.mark.asyncio
-    async def test_returns_correct_detection_fields(self, fake_request, detection_job, image_path):
+    async def test_returns_correct_detection_fields(self, fake_request, detection_job):
         from server.http_server import detect_features
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
+        with read_request_returning(image_request()):
             with patch("server.http_server.submit_detection_job", return_value=detection_job):
                 result = await detect_features(fake_request)
 
@@ -238,32 +290,20 @@ class TestDetectFeatures:
         assert d["label"] == "FACE_FEMALE"
         assert d["score"] == pytest.approx(0.92)
         assert d["box"] == [10.0, 20.0, 100.0, 100.0]
+        assert all(isinstance(v, float) for v in d["box"])
         assert d["polygons"] == []
         assert d["model"] == "nudenet"
         assert d["parent"] is None
 
     @pytest.mark.asyncio
-    async def test_box_values_are_floats(self, fake_request, detection_job, image_path):
+    async def test_polygons_and_parent_are_serialized(self, fake_request):
         from server.http_server import detect_features
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_detection_job", return_value=detection_job):
-                result = await detect_features(fake_request)
-
-        body = json.loads(result.body)
-        for val in body["detections"][0]["box"]:
-            assert isinstance(val, float)
-
-    @pytest.mark.asyncio
-    async def test_polygons_and_parent_are_serialized(self, fake_request, image_path):
-        from server.http_server import detect_features
-
-        import numpy as np
         eye = make_detection(id=1, label="EYES_FEMALE", model="landmarks", parent=0,
                              polygons=[np.array([[1, 2], [3, 4], [5, 6]], dtype=np.int32)])
         submit = make_detection_submit([make_detection(), eye], cached_models=["nudenet"])
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
+        with read_request_returning(image_request()):
             with patch("server.http_server.submit_detection_job", return_value=submit):
                 result = await detect_features(fake_request)
 
@@ -273,18 +313,7 @@ class TestDetectFeatures:
         assert body["cached_models"] == ["nudenet"]
 
     @pytest.mark.asyncio
-    async def test_returns_empty_detections_list_when_nothing_found(self, fake_request, image_path):
-        from server.http_server import detect_features
-
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_detection_job", return_value=make_detection_submit([])):
-                result = await detect_features(fake_request)
-
-        body = json.loads(result.body)
-        assert body["detections"] == []
-
-    @pytest.mark.asyncio
-    async def test_returns_multiple_detections_in_order(self, fake_request, image_path):
+    async def test_returns_multiple_detections_in_order(self, fake_request):
         from server.http_server import detect_features
 
         submit = make_detection_submit([
@@ -292,7 +321,7 @@ class TestDetectFeatures:
             make_detection(id=1, label="FACE_FEMALE"),
         ])
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
+        with read_request_returning(image_request()):
             with patch("server.http_server.submit_detection_job", return_value=submit):
                 result = await detect_features(fake_request)
 
@@ -300,105 +329,92 @@ class TestDetectFeatures:
         assert [d["label"] for d in body["detections"]] == ["BODY", "FACE_FEMALE"]
 
     @pytest.mark.asyncio
-    async def test_returns_500_when_job_failed(self, fake_request, image_path):
+    async def test_returns_500_when_job_failed(self, fake_request):
         from server.http_server import detect_features
 
         job, handle = make_detection_submit([])
         job.success = False
         job.error = "pipeline exploded"
 
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
+        with read_request_returning(image_request()):
             with patch("server.http_server.submit_detection_job", return_value=(job, handle)):
                 result = await detect_features(fake_request)
 
         assert result.status == 500
+        assert json.loads(result.body)["code"] == "processing_failed"
 
     @pytest.mark.asyncio
-    async def test_returns_500_on_read_request_exception(self, fake_request):
+    async def test_undecodable_image_is_400(self, fake_request):
         from server.http_server import detect_features
 
-        with patch("server.http_server.rr.read_request", side_effect=Exception("bad")):
+        with read_request_returning(image_request()), patch("server.helpers._image_pipeline", MagicMock()):
             result = await detect_features(fake_request)
 
-        assert result.status == 500
-        body = json.loads(result.body)
-        assert "error" in body
-
-    @pytest.mark.asyncio
-    async def test_returns_500_on_job_exception(self, fake_request, image_path):
-        from server.http_server import detect_features
-
-        with patch("server.http_server.rr.read_request", return_value=(b"img", image_path, None, "base64")):
-            with patch("server.http_server.submit_detection_job", side_effect=RuntimeError("crash")):
-                result = await detect_features(fake_request)
-
-        assert result.status == 500
+        assert result.status == 400
+        assert json.loads(result.body)["code"] == "invalid_image"
 
 
 # ---------------------------------------------------------------------------
-# reset_cache
+# cache
 # ---------------------------------------------------------------------------
 
-class TestResetCache:
+class TestCache:
 
     @pytest.mark.asyncio
-    async def test_returns_success_status(self, fake_request, tmp_path):
-        from server.http_server import reset_cache
+    async def test_info_counts_files_and_bytes(self, fake_request, tmp_path):
+        from server.http_server import cache_info
 
-        with patch("server.http_server.CACHE_DIR", tmp_path):
-            result = await reset_cache(fake_request)
+        (tmp_path / "a.json").write_bytes(b"12345")
+        (tmp_path / "videos" / "abc").mkdir(parents=True)
+        (tmp_path / "videos" / "abc" / "clip.json").write_bytes(b"123")
 
-        body = json.loads(result.body)
-        assert body["status"] == "success"
+        with patch("server.server_config.CACHE_DIR", tmp_path):
+            body = json.loads((await cache_info(fake_request)).body)
+
+        assert (body["status"], body["files"], body["bytes"]) == ("success", 2, 8)
 
     @pytest.mark.asyncio
-    async def test_deletes_all_files_in_cache_dir(self, fake_request, tmp_path):
-        from server.http_server import reset_cache
+    async def test_delete_removes_everything_and_reports_it(self, fake_request, tmp_path):
+        from server.http_server import delete_cache
 
         (tmp_path / "cache1.bin").write_bytes(b"a")
-        (tmp_path / "cache2.bin").write_bytes(b"b")
-        (tmp_path / "cache3.bin").write_bytes(b"c")
+        (tmp_path / "subdir").mkdir()
+        (tmp_path / "subdir" / "cache2.bin").write_bytes(b"bc")
 
-        with patch("server.http_server.CACHE_DIR", tmp_path):
-            await reset_cache(fake_request)
+        with patch("server.server_config.CACHE_DIR", tmp_path):
+            body = json.loads((await delete_cache(fake_request)).body)
 
-        remaining_files = [p for p in tmp_path.iterdir() if p.is_file()]
-        assert remaining_files == []
-
-    @pytest.mark.asyncio
-    async def test_removes_subdirectories(self, fake_request, tmp_path):
-        from server.http_server import reset_cache
-
-        subdir = tmp_path / "subdir"
-        subdir.mkdir()
-
-        with patch("server.http_server.CACHE_DIR", tmp_path):
-            await reset_cache(fake_request)
-
-        assert not subdir.exists()
+        assert body == {"status": "success", "deleted_files": 2, "deleted_bytes": 3}
+        assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.asyncio
-    async def test_succeeds_when_cache_dir_does_not_exist(self, fake_request, tmp_path):
-        from server.http_server import reset_cache
+    async def test_delete_succeeds_when_cache_dir_does_not_exist(self, fake_request, tmp_path):
+        from server.http_server import delete_cache
 
-        missing = tmp_path / "nonexistent"
-        with patch("server.http_server.CACHE_DIR", missing):
-            result = await reset_cache(fake_request)
+        with patch("server.server_config.CACHE_DIR", tmp_path / "nonexistent"):
+            body = json.loads((await delete_cache(fake_request)).body)
 
-        body = json.loads(result.body)
-        assert body["status"] == "success"
+        assert body["status"] == "success" and body["deleted_files"] == 0
 
     @pytest.mark.asyncio
     async def test_returns_500_on_os_error(self, fake_request):
-        from server.http_server import reset_cache
+        from server.http_server import delete_cache
 
-        with patch("server.http_server.CACHE_DIR") as mock_dir:
+        with patch("server.server_config.CACHE_DIR") as mock_dir:
             mock_dir.exists.side_effect = OSError("permission denied")
-            result = await reset_cache(fake_request)
+            result = await delete_cache(fake_request)
 
         assert result.status == 500
-        body = json.loads(result.body)
-        assert "error" in body
+        assert "permission denied" in json.loads(result.body)["error"]
+
+    def test_reset_cache_get_route_is_gone(self):
+        import asyncio
+        import server.http_server as hs
+
+        app = asyncio.run(hs.init_app())
+        routes = {(r.method, r.resource.canonical) for r in app.router.routes()}
+        assert ("DELETE", "/cache") in routes
+        assert not any(path == "/reset_cache" for _, path in routes)
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +638,40 @@ class TestCensorVideoFormat:
         assert response.status == 400
         submit.assert_not_called()
 
+    @staticmethod
+    def _video_part(data=b"video data"):
+        part = MagicMock()
+        part.name = "video"
+        part.read_chunk = AsyncMock(side_effect=[data, b""])
+        return part
+
+    @pytest.fixture()
+    def dirs(self, tmp_path):
+        """Upload, censored and cache folders in tmp_path."""
+        import server.http_server as hs
+        upload, censored, cache = tmp_path / "up", tmp_path / "out", tmp_path / "cache"
+        upload.mkdir(), censored.mkdir()
+        with patch.object(hs, "UPLOAD_DIR", upload), patch.object(hs, "CENSORED_PATH", censored), \
+                patch.object(hs, "CACHE_DIR", cache):
+            yield upload, censored, cache
+
+    async def _run(self, parts, video_info=None):
+        """Run censor_video with a fake video job that 'censors' by copying; returns (submit mock, response mock)."""
+        import server.http_server as hs
+
+        async def fake_submit(video_path, output_path, censor_config, early_exit, cache_dir):
+            output_path.write_bytes(video_path.read_bytes())
+            return MagicMock(success=True, result=str(output_path))
+
+        info = video_info or hs.VideoInfo(frames=300, fps=30.0, width=640, height=360)
+        with patch.object(hs, "submit_video_job", AsyncMock(side_effect=fake_submit)) as submit, \
+                patch.object(hs, "read_video_info", return_value=info), \
+                patch.object(hs.web, "StreamResponse") as stream_response:
+            stream_response.return_value.prepare = AsyncMock()
+            stream_response.return_value.write = AsyncMock()
+            response = await hs.censor_video(self._request(parts))
+        return submit, stream_response, response
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("parts, output_name, content_type", [
         ([("filename", "clip.mkv")], "clip.mkv", "video/x-matroska"),
@@ -629,22 +679,232 @@ class TestCensorVideoFormat:
         ([("format", "gif")], "video.gif", "image/gif"),
         ([], "video.mp4", "video/mp4"),
     ])
-    async def test_output_path_and_content_type(self, tmp_path, parts, output_name, content_type):
+    async def test_output_path_and_content_type(self, dirs, parts, output_name, content_type):
+        _, censored, _ = dirs
+        submit, stream_response, _ = await self._run(
+            [self._text_part(name, text) for name, text in parts] + [self._video_part()])
+
+        assert submit.call_args.kwargs["output_path"] == censored / output_name
+        assert stream_response.call_args.kwargs["headers"]["Content-Type"] == content_type
+
+    @pytest.mark.asyncio
+    async def test_headers_describe_the_video(self, dirs):
+        _, stream_response, _ = await self._run([self._text_part("filename", "clip.mp4"), self._video_part()])
+        headers = stream_response.call_args.kwargs["headers"]
+
+        assert headers["X-Frame-Count"] == "300"
+        assert headers["X-Video-Fps"] == "30.000"
+        assert headers["X-Video-Duration"] == "10.000"
+        assert (headers["X-Video-Width"], headers["X-Video-Height"]) == ("640", "360")
+        assert int(headers["X-Processing-Time-Ms"]) >= 0
+        assert headers["Content-Disposition"] == 'attachment; filename="clip.mp4"'
+
+    @pytest.mark.asyncio
+    async def test_taken_names_get_a_number(self, dirs):
+        upload, censored, _ = dirs
+        (upload / "clip.mp4").write_bytes(b"older upload")
+        (censored / "clip_1.mp4").write_bytes(b"older output")
+
+        submit, _, _ = await self._run([self._text_part("filename", "clip.mp4"), self._video_part(b"new")])
+
+        assert submit.call_args.kwargs["video_path"] == upload / "clip_1.mp4"
+        assert (upload / "clip_1.mp4").read_bytes() == b"new"
+        assert (upload / "clip.mp4").read_bytes() == b"older upload"
+        assert submit.call_args.kwargs["output_path"] == censored / "clip_1_1.mp4"
+        assert (censored / "clip_1.mp4").read_bytes() == b"older output"
+
+    @pytest.mark.asyncio
+    async def test_detections_are_cached_per_content(self, dirs):
+        _, _, cache = dirs
+        submit_a, _, _ = await self._run([self._video_part(b"video a")])
+        submit_b, _, _ = await self._run([self._video_part(b"video b")])
+        submit_a2, _, _ = await self._run([self._video_part(b"video a")])
+
+        dir_a, dir_b, dir_a2 = (s.call_args.kwargs["cache_dir"] for s in (submit_a, submit_b, submit_a2))
+        assert dir_a.parent == cache / "videos"
+        assert dir_a != dir_b and dir_a == dir_a2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("parts, error", [
+        ([("filename", "clip.mp4")], "No video"),
+        ([("config", "{not json")], "not valid JSON"),
+    ])
+    async def test_bad_requests_are_400(self, dirs, parts, error):
+        submit, _, response = await self._run([self._text_part(name, text) for name, text in parts])
+
+        assert response.status == 400
+        assert error in json.loads(response.body)["error"]
+        submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_video_is_400_and_removed(self, dirs):
+        upload, _, _ = dirs
+        submit, _, response = await self._run([self._video_part(b"")])
+
+        assert response.status == 400
+        assert list(upload.iterdir()) == []
+        submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_failed_job_is_500_and_leaves_no_output(self, dirs):
+        import server.http_server as hs
+        _, censored, _ = dirs
+
+        with patch.object(hs, "submit_video_job", AsyncMock(return_value=MagicMock(success=False, error="boom"))), \
+                patch.object(hs, "read_video_info", return_value=hs.VideoInfo(10, 10.0, 64, 48)):
+            response = await hs.censor_video(self._request([self._video_part()]))
+
+        assert response.status == 500
+        assert json.loads(response.body)["code"] == "processing_failed"
+        assert list(censored.iterdir()) == []
+
+
+class TestCensorVideoUrl:
+    """The 'video_url' part of /censor_video."""
+
+    @pytest.fixture()
+    def dirs(self, tmp_path):
+        import server.http_server as hs
+        upload, censored = tmp_path / "up", tmp_path / "out"
+        upload.mkdir(), censored.mkdir()
+        with patch.object(hs, "UPLOAD_DIR", upload), patch.object(hs, "CENSORED_PATH", censored), \
+                patch.object(hs, "CACHE_DIR", tmp_path / "cache"):
+            yield upload, censored
+
+    @staticmethod
+    def downloads(content=b"downloaded video"):
+        """Patches download_video to write content."""
+        def fake(url, path, digest=None):
+            path.write_bytes(content)
+            if digest is not None:
+                digest.update(content)
+        return patch("server.http_server.rr.download_video", side_effect=fake)
+
+    async def _run(self, parts, info=None):
         import server.http_server as hs
 
-        output = tmp_path / output_name
-        output.write_bytes(b"data")
-        result = MagicMock(success=True, result=output)
-        request = self._request([self._text_part(name, text) for name, text in parts])
+        async def fake_submit(video_path, output_path, censor_config, early_exit, cache_dir):
+            output_path.write_bytes(video_path.read_bytes())
+            return MagicMock(success=True, result=str(output_path))
 
-        with patch.object(hs, "submit_video_job", AsyncMock(return_value=result)) as submit, \
+        request = TestCensorVideoFormat._request([TestCensorVideoFormat._text_part(n, t) for n, t in parts])
+        with patch.object(hs, "submit_video_job", AsyncMock(side_effect=fake_submit)) as submit, \
+                patch.object(hs, "read_video_info", return_value=info or hs.VideoInfo(20, 10.0, 64, 48)), \
                 patch.object(hs.web, "StreamResponse") as stream_response:
             stream_response.return_value.prepare = AsyncMock()
             stream_response.return_value.write = AsyncMock()
-            await hs.censor_video(request)
+            response = await hs.censor_video(request)
+        return submit, stream_response, response
 
-        assert submit.call_args.kwargs["output_path"] == hs.CENSORED_PATH / output_name
-        assert stream_response.call_args.kwargs["headers"]["Content-Type"] == content_type
+    @pytest.mark.asyncio
+    async def test_name_and_format_come_from_the_url(self, dirs):
+        upload, censored = dirs
+        with self.downloads() as download:
+            submit, stream_response, _ = await self._run([("video_url", "https://example.com/media/my%20anim.gif")])
+
+        assert download.call_args.args[0] == "https://example.com/media/my%20anim.gif"
+        assert (upload / "my anim.gif").read_bytes() == b"downloaded video"
+        assert submit.call_args.kwargs["output_path"] == censored / "my anim.gif"
+        assert stream_response.call_args.kwargs["headers"]["Content-Type"] == "image/gif"
+
+    @pytest.mark.asyncio
+    async def test_filename_and_format_parts_win_in_any_order(self, dirs):
+        upload, censored = dirs
+        with self.downloads():
+            submit, _, _ = await self._run([("video_url", "https://example.com/watch?v=1"),
+                                            ("filename", "clip.mkv"), ("format", "webm")])
+
+        assert submit.call_args.kwargs["video_path"] == upload / "clip.mkv"
+        assert submit.call_args.kwargs["output_path"] == censored / "clip.webm"
+
+    @pytest.mark.asyncio
+    async def test_url_without_a_file_name_is_video_mp4(self, dirs):
+        upload, _ = dirs
+        with self.downloads():
+            submit, _, _ = await self._run([("video_url", "https://example.com/watch?v=1")])
+
+        assert submit.call_args.kwargs["video_path"] == upload / "video.mp4"
+
+    @pytest.mark.asyncio
+    async def test_video_and_video_url_together_is_400(self, dirs):
+        import server.http_server as hs
+        upload, _ = dirs
+
+        video = MagicMock()
+        video.name = "video"
+        video.read_chunk = AsyncMock(side_effect=[b"data", b""])
+        url = TestCensorVideoFormat._text_part("video_url", "https://example.com/a.mp4")
+        with self.downloads() as download, patch.object(hs, "submit_video_job") as submit:
+            response = await hs.censor_video(TestCensorVideoFormat._request([url, video]))
+
+        assert response.status == 400 and "not both" in json.loads(response.body)["error"]
+        download.assert_not_called()
+        submit.assert_not_called()
+        assert list(upload.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_local_urls_are_refused_before_anything_is_read(self, dirs):
+        with self.downloads() as download:
+            submit, _, response = await self._run([("video_url", "http://127.0.0.1/a.mp4")])
+
+        assert response.status == 400
+        assert json.loads(response.body)["code"] == "url_not_allowed"
+        download.assert_not_called()
+        submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_failed_download_is_502_and_leaves_no_file(self, dirs):
+        from server.errors import ApiError
+        upload, _ = dirs
+
+        def fail(url, path, digest=None):
+            path.write_bytes(b"partial")
+            raise ApiError("Could not download the video: the server answered 404.", "download_failed", 502)
+
+        with patch("server.http_server.rr.download_video", side_effect=fail):
+            submit, _, response = await self._run([("video_url", "https://example.com/a.mp4")])
+
+        assert response.status == 502
+        assert json.loads(response.body)["code"] == "download_failed"
+        assert list(upload.iterdir()) == []
+        submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unreadable_video_is_400_and_removed(self, dirs):
+        import server.http_server as hs
+        upload, _ = dirs
+
+        with self.downloads(b"<html>not a video</html>"):
+            submit, _, response = await self._run([("video_url", "https://example.com/a.mp4")],
+                                                  info=hs.VideoInfo(0, 0.0, 0, 0))
+
+        assert response.status == 400
+        assert json.loads(response.body)["code"] == "invalid_video"
+        assert list(upload.iterdir()) == []
+        submit.assert_not_called()
+
+
+class TestVideoFormats:
+
+    @pytest.mark.asyncio
+    async def test_lists_formats(self, fake_request):
+        from server.http_server import VIDEO_FORMATS, video_formats
+
+        body = json.loads((await video_formats(fake_request)).body)
+        assert body["default"] == "mp4"
+        assert {f["format"]: f["content_type"] for f in body["formats"]} == VIDEO_FORMATS
+
+
+class TestUniquePath:
+
+    def test_reserves_free_names(self, tmp_path):
+        from server.helpers import unique_path
+
+        first = unique_path(tmp_path, "a.mp4")
+        second = unique_path(tmp_path, "a.mp4")
+        third = unique_path(tmp_path, "a.mp4")
+        assert [p.name for p in (first, second, third)] == ["a.mp4", "a_1.mp4", "a_2.mp4"]
+        assert all(p.exists() for p in (first, second, third))
 
 
 # ---------------------------------------------------------------------------
