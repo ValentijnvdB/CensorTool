@@ -349,7 +349,7 @@ class VideoPipeline:
         print("Running models", flush=True)
         submit_pending()
 
-        step = max(1, num_frames * 5 // 100)
+        step = max(1, len(needed) * 5 // 100)  # report every 5% of the frames this pass detects
         next_update, completed = step, 0
         while in_flight:
             if job.cancelled:
