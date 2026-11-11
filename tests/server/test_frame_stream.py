@@ -18,7 +18,8 @@ class FakePipeline:
         self.auto_finish = True
         self.jobs = []
 
-    def submit(self, image_bytes, output_path, config):
+    def submit(self, image_bytes, output_path, config, use_cache=True):
+        self.use_cache = use_cache
         job = MagicMock()
         job.cancelled = False
         job.cancel.side_effect = lambda: setattr(job, "cancelled", True)
@@ -197,3 +198,25 @@ async def test_open_streams_are_counted(stream):
             break
         await asyncio.sleep(0.01)
     assert activity.open_frame_streams == 0
+
+
+@pytest.mark.asyncio
+async def test_frames_skip_the_detections_cache(stream):
+    await stream.send_bytes(HEADER + b"a")
+    await stream.receive_bytes(timeout=2)
+    assert stream.pipeline.use_cache is False
+
+
+def test_remembered_frames_are_capped_oldest_first():
+    from server.http_server import FrameStream
+
+    fs = FrameStream(MagicMock())
+    fs.REMEMBER_BYTES = 10
+    fs.remember("a", (b"1234", [], 1, 1))
+    fs.remember("b", (b"1234", [], 1, 1))
+    fs.remembered.move_to_end("a")          # 'a' was used again: 'b' is now the oldest
+    fs.remember("c", (b"1234", [], 1, 1))   # 12 bytes > 10: forget 'b'
+    assert list(fs.remembered) == ["a", "c"] and fs.remembered_bytes == 8
+
+    fs.remember("d", (b"x" * 50, [], 1, 1))
+    assert list(fs.remembered) == ["d"]     # the newest frame stays, even when too big

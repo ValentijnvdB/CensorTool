@@ -8,7 +8,7 @@ import ssl
 import threading
 import time
 import traceback
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -650,6 +650,7 @@ class FrameStream:
     HEADER_SIZE = 13
     EXTENSION = '.webp'
     FPS_WINDOW = 10  # seconds
+    REMEMBER_BYTES = 256 * 1024 * 1024  # censored frames kept for repeats (e.g. seeking back); oldest go first
 
     def __init__(self, ws: web.WebSocketResponse):
         self.ws = ws
@@ -657,8 +658,10 @@ class FrameStream:
         self.include_detections = False
         self.stopped = False
         self.pending: list[_PendingFrame] = []
-        # censored frames by the hash of the received frame: (encoded frame, detections, width, height)
-        self.remembered: dict[str, tuple[bytes, list, int, int]] = {}
+        # censored frames by the hash of the received frame: (encoded frame, detections, width, height), least
+        # recently used first; their encoded frames hold at most REMEMBER_BYTES
+        self.remembered: OrderedDict[str, tuple[bytes, list, int, int]] = OrderedDict()
+        self.remembered_bytes = 0
         self.sent_times: deque[float] = deque()
         self.counts = {'frames_received': 0, 'frames_sent': 0, 'frames_from_memory': 0, 'frames_failed': 0,
                        'frames_cancelled': 0}
@@ -706,6 +709,7 @@ class FrameStream:
                 return await self.send_error(str(e), INVALID_CONFIG)
             # remembered frames were censored with the previous config
             self.remembered.clear()
+            self.remembered_bytes = 0
             logger.info("Censor config of the frame stream " +
                         ("reset to the profile's." if self.config is None else "changed."))
             await self.ws.send_json({'type': 'config', 'status': 'success'})
@@ -761,10 +765,12 @@ class FrameStream:
 
         if image_hash in self.remembered:
             self.counts['frames_from_memory'] += 1
+            self.remembered.move_to_end(image_hash)
             return await self.send_frame(header, *self.remembered[image_hash])
 
         try:
-            job, handle = submit_censoring_job(image_bytes, None, self.config)
+            # no detections cache: it would get a file per frame
+            job, handle = submit_censoring_job(image_bytes, None, self.config, use_cache=False)
         except ApiError as e:
             self.counts['frames_failed'] += 1
             return await self.send_error(str(e), e.code, header)
@@ -790,8 +796,19 @@ class FrameStream:
         buffer = await asyncio.to_thread(np_to_bytes, censored, self.EXTENSION)
         width, height = image_size(censored) if hasattr(censored, 'shape') else (0, 0)
         remembered = (buffer, job.result.get('detections', []), width, height)
-        self.remembered[frame.image_hash] = remembered
+        self.remember(frame.image_hash, remembered)
         await self.send_frame(frame.header, *remembered)
+
+    def remember(self, image_hash: str, censored: tuple[bytes, list, int, int]):
+        """Keep a censored frame for when the same frame comes again, forgetting the oldest beyond REMEMBER_BYTES."""
+        old = self.remembered.pop(image_hash, None)
+        if old is not None:
+            self.remembered_bytes -= len(old[0])
+        self.remembered[image_hash] = censored
+        self.remembered_bytes += len(censored[0])
+        while self.remembered_bytes > self.REMEMBER_BYTES and len(self.remembered) > 1:
+            _, dropped = self.remembered.popitem(last=False)
+            self.remembered_bytes -= len(dropped[0])
 
     async def sender(self):
         while not self.ws.closed and not self.stopped:

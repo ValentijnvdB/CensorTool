@@ -433,7 +433,8 @@ def decode_image(image: bytes) -> np.ndarray:
     return decoded
 
 
-def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_config: dict|None) -> tuple[cc.Job, cc.JobHandle]:
+def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_config: dict|None,
+                use_cache: bool = True) -> tuple[cc.Job, cc.JobHandle]:
     image: np.ndarray = decode_image(image)
 
     job_id = str(uuid.uuid4())
@@ -453,7 +454,7 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
         output_path=str(output_path) if output_path else None,
         early_exit=early_exit,
         override_cache=False,
-        use_cache=True,
+        use_cache=use_cache,
         cache_base_dir=str(server_config.CACHE_DIR),
         config=censor_config,
     )
@@ -464,8 +465,13 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
     return job, handle
 
 
-def submit_censoring_job(image: bytes, output_path: Path|None, censor_config: dict|None) -> tuple[cc.Job, cc.JobHandle]:
-    return _submit_job(image, output_path, early_exit=False, censor_config=censor_config)
+def submit_censoring_job(image: bytes, output_path: Path|None, censor_config: dict|None,
+                         use_cache: bool = True) -> tuple[cc.Job, cc.JobHandle]:
+    """
+    :param use_cache: read and write the detections cache (a file per image). Off for live video frames: they would
+        fill the cache folder with a file per frame.
+    """
+    return _submit_job(image, output_path, early_exit=False, censor_config=censor_config, use_cache=use_cache)
 
 
 def submit_detection_job(image: bytes, output_path: Path|None, censor_config: dict|None) -> tuple[cc.Job, cc.JobHandle]:

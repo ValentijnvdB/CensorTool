@@ -968,7 +968,7 @@ class TestCensorFrameConfig:
 
         submitted = []  # the config of every submitted job
 
-        def submit(image_bytes, output_path, config):
+        def submit(image_bytes, output_path, config, use_cache=True):
             job = MagicMock()
             job.job_id = str(len(submitted))
             job.result = {"image": image_bytes}
