@@ -723,15 +723,11 @@ class TestCensorVideoFormat:
         assert list(upload.iterdir()) == [] and list(censored.iterdir()) == []
 
     @pytest.mark.asyncio
-    async def test_detections_are_cached_per_content(self, dirs):
+    async def test_detections_go_to_the_video_cache(self, dirs):
+        # one folder for every video: the backend names each cache after the video's contents
         _, _, cache = dirs
-        submit_a, _, _ = await self._run([self._video_part(b"video a")])
-        submit_b, _, _ = await self._run([self._video_part(b"video b")])
-        submit_a2, _, _ = await self._run([self._video_part(b"video a")])
-
-        dir_a, dir_b, dir_a2 = (s.call_args.kwargs["cache_dir"] for s in (submit_a, submit_b, submit_a2))
-        assert dir_a.parent == cache / "videos"
-        assert dir_a != dir_b and dir_a == dir_a2
+        submit, _, _ = await self._run([self._video_part(b"video a")])
+        assert submit.call_args.kwargs["cache_dir"] == cache / "videos"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("parts, error", [
@@ -783,7 +779,7 @@ class TestCensorVideoUrl:
     @staticmethod
     def downloads(content=b"downloaded video"):
         """Patches download_video to write content."""
-        def fake(url, path, digest=None, stop=None):
+        def fake(url, path, max_size, digest=None, stop=None):
             path.write_bytes(content)
             if digest is not None:
                 digest.update(content)
@@ -868,7 +864,7 @@ class TestCensorVideoUrl:
         from server.errors import ApiError
         upload, _ = dirs
 
-        def fail(url, path, digest=None, stop=None):
+        def fail(url, path, max_size, digest=None, stop=None):
             path.write_bytes(b"partial")
             raise ApiError("Could not download the video: the server answered 404.", "download_failed", 502)
 

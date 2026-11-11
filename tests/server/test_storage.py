@@ -161,11 +161,10 @@ class TestEndpoints:
 
     @pytest.mark.asyncio
     async def test_delete_storage_keeps_job_files(self, client, server_dir):
-        from server.video_jobs import VideoJobRecord
+        from server.video_jobs import VideoWork
 
         job_file = make_file(server_dir / "uncensored" / "clip.mp4")
-        record = VideoJobRecord("x", "mp4", "video/mp4", False, state="done", input_path=job_file)
-        client.jobs.jobs["x"] = record
+        client.jobs.works["x"] = VideoWork("x", "mp4", "video/mp4", "config", state="done", input_path=job_file)
         make_file(server_dir / "censored" / "a.jpg", b"123")
 
         body = await (await client.delete("/storage")).json()
@@ -208,4 +207,33 @@ def test_config_retention_must_be_a_positive_number(tmp_path, value):
     path = tmp_path / "config.yml"
     path.write_text(BASE_CONFIG + f"server_file_retention_hours: {value}")
     with pytest.raises(ValueError, match="server_file_retention_hours"):
+        load_config(path)
+
+
+@pytest.mark.parametrize("extra, grace, max_mb", [
+    ("", 30, 500),
+    ("server_video_job_grace_seconds: 0\nserver_max_video_download_mb: 50", 0, 50),
+    ("server_video_job_grace_seconds: 2.5\nserver_max_video_download_mb: 0.5", 2.5, 0.5),
+])
+def test_config_video_job_settings(tmp_path, extra, grace, max_mb):
+    from app.config import load_config
+
+    path = tmp_path / "config.yml"
+    path.write_text(BASE_CONFIG + extra)
+    config = load_config(path)
+    assert (config.server_video_job_grace_seconds, config.server_max_video_download_mb) == (grace, max_mb)
+
+
+@pytest.mark.parametrize("line, key", [
+    ("server_video_job_grace_seconds: -1", "server_video_job_grace_seconds"),
+    ("server_video_job_grace_seconds: true", "server_video_job_grace_seconds"),
+    ("server_max_video_download_mb: 0", "server_max_video_download_mb"),
+    ("server_max_video_download_mb: '500 MB'", "server_max_video_download_mb"),
+])
+def test_config_video_job_settings_must_be_valid(tmp_path, line, key):
+    from app.config import load_config
+
+    path = tmp_path / "config.yml"
+    path.write_text(BASE_CONFIG + line)
+    with pytest.raises(ValueError, match=key):
         load_config(path)

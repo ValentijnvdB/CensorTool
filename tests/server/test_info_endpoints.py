@@ -184,8 +184,27 @@ class TestHealth:
     def test_pending_image_jobs_drop_finished_ones(self):
         from server.helpers import _Activity
 
-        activity = _Activity(image_jobs=[MagicMock(done=lambda: True), MagicMock(done=lambda: False)])
+        activity = _Activity(image_jobs={MagicMock(done=lambda: True), MagicMock(done=lambda: False)})
         assert activity.pending_image_jobs() == 1
+
+    def test_pending_image_jobs_survive_a_handle_whose_result_was_taken(self):
+        # censor_core < 2.1.1: done() raises after wait() emptied the std::future
+        from server.helpers import _Activity
+
+        def raises():
+            raise RuntimeError("std::future_error: No associated state")
+
+        activity = _Activity(image_jobs={MagicMock(done=raises), MagicMock(done=lambda: False)})
+        assert activity.pending_image_jobs() == 1
+
+    def test_job_result_stops_counting_the_job(self):
+        from server import helpers
+
+        handle = MagicMock(done=lambda: False)
+        handle.wait.return_value = "job"
+        with patch.object(helpers, "activity", helpers._Activity(image_jobs={handle})):
+            assert helpers.job_result(handle) == "job"
+            assert helpers.activity.image_jobs == set()
 
 
 class TestSchema:

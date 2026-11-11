@@ -301,7 +301,7 @@ class TestDownloads:
         response.iter_content.return_value = [b"abc", b"def"]
         digest = hashlib.sha256()
         with patch("server.request_reader.requests.get", return_value=response):
-            download_video("http://example.com/a.mp4", tmp_path / "a.mp4", digest)
+            download_video("http://example.com/a.mp4", tmp_path / "a.mp4", 2**20, digest)
 
         assert (tmp_path / "a.mp4").read_bytes() == b"abcdef"
         assert digest.hexdigest() == hashlib.sha256(b"abcdef").hexdigest()
@@ -311,7 +311,16 @@ class TestDownloads:
 
         with patch("server.request_reader.requests.get", return_value=fake_response(status=403)):
             with pytest.raises(ApiError, match="Could not download the video: the server answered 403"):
-                download_video("http://example.com/a.mp4", tmp_path / "a.mp4")
+                download_video("http://example.com/a.mp4", tmp_path / "a.mp4", 2**20)
+
+    def test_video_larger_than_max_size_is_refused(self, public_dns, tmp_path):
+        from server.request_reader import ApiError, download_video
+
+        response = fake_response()
+        response.iter_content.return_value = [b"x" * 600_000, b"x" * 600_000]
+        with patch("server.request_reader.requests.get", return_value=response):
+            with pytest.raises(ApiError, match="larger than 1 MB"):
+                download_video("http://example.com/a.mp4", tmp_path / "a.mp4", 2**20)
 
     @pytest.mark.parametrize("url, name", [
         ("https://example.com/media/clip.webm", "clip.webm"),

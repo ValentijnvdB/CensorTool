@@ -1,12 +1,15 @@
 """
 Per-stage detection caches.
 
-Each stage's detections are stored with the stage's fingerprint and are reused while it matches. The files are
-JSON and use different names than the C++ backend's binary caches (<hash>.py.json / <stem>.py.json), so both
-backends can share a cache directory without reading each other's files.
+Each stage's detections are stored with the stage's fingerprint and are reused while it matches. Both images and
+videos are cached by their content: an image by a hash of its pixels (<hash>.py.json), a video by a hash of its file
+(<hash>.video.py.json), so the same video under another name or in another folder finds its cache. The files are JSON
+and use different names than the C++ backend's binary caches, so both backends can share a cache directory without
+reading each other's files.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -19,6 +22,7 @@ from .geometry import Detection
 
 CACHE_VERSION = 1
 SUFFIX = '.py.json'
+VIDEO_SUFFIX = '.video' + SUFFIX
 
 # stage -> (fingerprint, detections)
 CacheEntries = dict[str, tuple[str, list[Detection]]]
@@ -108,8 +112,18 @@ def write_image_cache(path: Path, entries: CacheEntries) -> None:
     _write(path, 'image', _entries_to_json(entries))
 
 
+def hash_file(path: Path) -> str:
+    """A hash of the file's contents (16 hex characters)."""
+    h = hashlib.blake2b(digest_size=8)
+    with open(path, 'rb') as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def video_cache_path(video_path: Path, cache_dir: Path) -> Path:
-    return Path(cache_dir) / f"{Path(video_path).stem}{SUFFIX}"
+    """The cache file of a video, named after its contents (not its file name)."""
+    return Path(cache_dir) / f"{hash_file(video_path)}{VIDEO_SUFFIX}"
 
 
 def read_video_cache(path: Path) -> VideoCache:

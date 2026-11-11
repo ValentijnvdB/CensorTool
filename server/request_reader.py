@@ -29,7 +29,8 @@ EXPECTED_RESPONSES = ('base64', 'bytes', 'url')
 
 DOWNLOAD_TIMEOUT = 5
 MAX_REDIRECTS = 5
-MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024
+MAX_IMAGE_DOWNLOAD_SIZE = 500 * 1024 * 1024
+"""The largest image it downloads (an image_url). Videos: server_max_video_download_mb in config.yml."""
 # some sites (e.g. Wikimedia) refuse requests' default client name
 DOWNLOAD_HEADERS = {'User-Agent': 'CensorTool-server/1.0'}
 
@@ -159,7 +160,7 @@ def check_url_allowed(url: str, resolve: bool = True) -> None:
         raise not_allowed
 
 
-def iter_download(url: str, what: str = 'image', max_size: int = MAX_DOWNLOAD_SIZE) -> Iterator[bytes]:
+def iter_download(url: str, what: str = 'image', max_size: int = MAX_IMAGE_DOWNLOAD_SIZE) -> Iterator[bytes]:
     """
     Download a file in chunks, following redirects only to allowed URLs.
 
@@ -187,7 +188,7 @@ def iter_download(url: str, what: str = 'image', max_size: int = MAX_DOWNLOAD_SI
                     size += len(chunk)
                     if size > max_size:
                         raise ApiError(f"Could not download the {what}: it is larger than "
-                                       f"{max_size // (1024 * 1024)} MB.", DOWNLOAD_FAILED, 502)
+                                       f"{max_size / 2**20:g} MB.", DOWNLOAD_FAILED, 502)
                     yield chunk
             except requests.RequestException as e:
                 raise ApiError(f"Could not download the {what}: {e}", DOWNLOAD_FAILED, 502) from None
@@ -205,16 +206,17 @@ def download_image(url: str) -> bytes:
     return b''.join(iter_download(url, 'image'))
 
 
-def download_video(url: str, path: Path, digest=None, stop: threading.Event | None = None) -> None:
+def download_video(url: str, path: Path, max_size: int, digest=None, stop: threading.Event | None = None) -> None:
     """
     Download a video to path, following redirects only to allowed URLs.
 
+    :param max_size: the largest video it downloads, in bytes.
     :param digest: a hashlib object that is updated with the contents.
     :param stop: when set, the download stops with an ApiError.
-    :raises ApiError: if a URL is not allowed, the download fails or is stopped.
+    :raises ApiError: if a URL is not allowed, the download fails, is too large or is stopped.
     """
     with open(path, 'wb') as f:
-        for chunk in iter_download(url, 'video'):
+        for chunk in iter_download(url, 'video', max_size):
             if stop is not None and stop.is_set():
                 raise ApiError("The download was stopped.", DOWNLOAD_FAILED, 502)
             if digest is not None:

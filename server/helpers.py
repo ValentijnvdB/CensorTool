@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import json
 import shutil
 import time
 import uuid
@@ -48,14 +50,35 @@ class VideoTicket:
 @dataclass
 class _Activity:
     """What the server is busy with, for GET /health."""
-    image_jobs: list = field(default_factory=list)  # handles of submitted image jobs; finished ones are pruned
+    # handles of submitted image jobs; removed once their result is taken (job_result) or when found finished
+    image_jobs: set = field(default_factory=set)
     video_queue: list[VideoTicket] = field(default_factory=list)  # waiting for their turn, in order
     video_running: VideoTicket | None = None
     open_frame_streams: int = 0
 
+    def prune_image_jobs(self):
+        """Forget finished image jobs, so their images are not kept in memory."""
+        self.image_jobs = {h for h in self.image_jobs if not _is_finished(h)}
+
     def pending_image_jobs(self) -> int:
-        self.image_jobs = [h for h in self.image_jobs if not h.done()]
+        self.prune_image_jobs()
         return len(self.image_jobs)
+
+
+def _is_finished(handle) -> bool:
+    try:
+        return handle.done()
+    except RuntimeError:
+        # censor_core < 2.1.1: done() raises "std::future_error: No associated state" after wait()
+        return True
+
+
+def job_result(handle: cc.JobHandle) -> cc.Job:
+    """Wait for an image job and return it; it no longer counts as pending."""
+    try:
+        return handle.wait()
+    finally:
+        activity.image_jobs.discard(handle)
 
 
 activity = _Activity()
@@ -153,16 +176,14 @@ class ConfigCheck:
 def _pipeline_errors(parsed, warnings: list[str]) -> list[str]:
     """
     Checks a parsed censor config against the loaded models: unknown labels are warnings; clip_to targets that no
-    model produces, and (Python backend only) shape MASK or clip_to on a detect model, are errors.
+    model produces, and shape MASK or clip_to on a detect model, are errors.
     """
     if _image_pipeline is None:
         return []
     labels = dict(_image_pipeline.labels)
-    graph = getattr(_image_pipeline, 'graph', None)  # only the Python backend tells which models segment
+    graph = _image_pipeline.graph
 
-    def is_segmentation(label: str) -> bool | None:
-        if graph is None:
-            return None
+    def is_segmentation(label: str) -> bool:
         return bool(graph.stage(labels[label]).polygons)
 
     errors = []
@@ -170,14 +191,14 @@ def _pipeline_errors(parsed, warnings: list[str]) -> list[str]:
         if label not in labels:
             warnings.append(f"No model produces label '{label}'{did_you_mean(label, labels)}; it is never censored.")
             continue
-        if box.shape == Shape.MASK and is_segmentation(label) is False:
+        if box.shape == Shape.MASK and not is_segmentation(label):
             errors.append(f"shape MASK for '{label}' needs a segmentation model, but '{labels[label]}' is a "
                           f"detect model.")
         for target in box.clip_to:
             if target not in labels:
                 errors.append(f"clip_to of '{label}': no model produces label '{target}'"
                               f"{did_you_mean(target, labels)}.")
-            elif is_segmentation(target) is False:
+            elif not is_segmentation(target):
                 errors.append(f"clip_to of '{label}': '{target}' comes from detect model '{labels[target]}'; "
                               f"clip_to needs a segmentation model.")
     return errors
@@ -311,6 +332,20 @@ def unique_path(directory: Path, name: str) -> Path:
             i += 1
 
 
+def effective_censor_config(censor_config: dict | None) -> dict | None:
+    """The censor config a video is censored with: the request's, else the profile's."""
+    return censor_config if censor_config is not None else _default_censor_config
+
+
+def censor_config_key(censor_config: dict | None) -> str:
+    """
+    Identifies the censor config a video is censored with, so jobs with the same config can share their work. A
+    request without a config gets the profile's current one, so a changed censor_config.yml gives another key.
+    """
+    canonical = json.dumps(effective_censor_config(censor_config), sort_keys=True, separators=(',', ':'), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def make_video_job(video_path: Path, output_path: Path, censor_config: dict | None, cache_dir: Path | None = None,
                    early_exit: bool = False) -> cc.VideoJob:
     """
@@ -331,7 +366,7 @@ def make_video_job(video_path: Path, output_path: Path, censor_config: dict | No
         override_cache=False,
         use_cache=True,
         cache_base_dir=str(cache_dir if cache_dir is not None else server_config.CACHE_DIR),
-        config=censor_config if censor_config is not None else _default_censor_config,
+        config=effective_censor_config(censor_config),
     )
 
 
@@ -347,7 +382,7 @@ async def run_video_job(ticket: VideoTicket) -> cc.VideoJob:
     """
     Censor a video in a thread, one video at a time, in the order they are submitted. Other requests are answered
     meanwhile. Cancelling the awaiting task takes a waiting video out of the queue; a running one is stopped with
-    ticket.job.cancel() (Python backend only).
+    ticket.job.cancel().
     """
     global _video_lock
     if _video_lock is None:
@@ -424,7 +459,8 @@ def _submit_job(image: bytes, output_path: Path|None, early_exit: bool, censor_c
     )
 
     handle = _image_pipeline.submit(job)
-    activity.image_jobs.append(handle)
+    activity.prune_image_jobs()  # also when GET /health is never called
+    activity.image_jobs.add(handle)
     return job, handle
 
 
@@ -439,5 +475,5 @@ def submit_detection_job(image: bytes, output_path: Path|None, censor_config: di
 async def wait_for_job(handle: cc.JobHandle) -> cc.Job:
     """Wait for an image job without blocking the server."""
     if handle.done():
-        return handle.wait()
-    return await asyncio.to_thread(handle.wait)
+        return job_result(handle)
+    return await asyncio.to_thread(job_result, handle)

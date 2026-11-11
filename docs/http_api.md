@@ -61,7 +61,7 @@ Errors are returned as JSON with a status code, a machine-readable `code` and a 
 | `not_ready`          | 409    | The video job has not finished yet.                                              |
 | `job_failed`         | 409    | The video job failed or was cancelled, so it has no result.                      |
 | `queue_full`         | 429    | Too many video jobs are waiting or running; try again later.                     |
-| `download_failed`    | 502    | The image or video URL could not be downloaded (unknown host, timeout, an HTTP error, larger than 100 MB). |
+| `download_failed`    | 502    | The image or video URL could not be downloaded (unknown host, timeout, an HTTP error, too large: images over 500 MB, videos over `server_max_video_download_mb`). |
 | `processing_failed`  | 500    | Censoring or detection failed.                                                   |
 | `internal_error`     | 500    | Anything else.                                                                   |
 | `unavailable`        | 503    | The pipeline is not running.                                                     |
@@ -238,9 +238,10 @@ The request must be `multipart/form-data`. Sending both `video` and `video_url`,
 (`invalid_video`).
 
 `video_url` is downloaded like a `source` image (see [Image requests](#image-requests)): only `http` and `https`
-URLs on the internet, never this machine or the local network (`url_not_allowed`), up to 100 MB. A failed download
-is a `502` with code `download_failed`. Downloaded videos are not reused: the same URL is downloaded again, but its
-detections come from the cache.
+URLs on the internet, never this machine or the local network (`url_not_allowed`), up to
+`server_max_video_download_mb` in [config.yml](config.md#http-server) (500 MB by default). A failed download is a
+`502` with code `download_failed`. `/censor_video` downloads the same URL again each time, but its detections come
+from the cache ([video jobs](#video-jobs) share the download).
 
 The response is the censored video, streamed back with the Content-Type of its format (e.g. `video/mp4`, `video/webm`,
 `image/gif`). The request returns when the whole video is done. Videos are censored one at a time; meanwhile the
@@ -260,7 +261,8 @@ The response has these headers:
 The uploaded (or downloaded) video is saved in `data/server/uncensored/` and the censored one in
 `data/server/censored/`, under a unique name: when a name is taken, `_1`, `_2`, ... is added (`clip.mp4`,
 `clip_1.mp4`, ...), so requests never overwrite each other's files. Both files are removed once the response is sent
-(or the request fails). Detections are cached per video content, so sending the same video again is faster.
+(or the request fails). Detections are cached by the video's content (whatever its name), so sending the same video
+again only censors and encodes it.
 
 The video is encoded as H.264 (VP9 for `webm`). The audio is kept as it is when the format does not change (and always
 for `mkv`); otherwise it is re-encoded to AAC (`mp4`, `m4v`, `mov`), Opus (`webm`) or MP3 (`avi`). A `gif` has no audio.
@@ -288,9 +290,18 @@ curl http://localhost:8443/videos/3f2a.../result -o clip_censored.mp4
 ```
 
 Videos are censored one at a time, in the order they were submitted, from both `/censor_video` and `/videos`.
-A finished job (done, failed or cancelled) is kept for **1 hour**, then the job and its files (the uploaded and the
-censored video) are removed. Jobs are kept in memory: restarting the server forgets them; their files are then
-removed like other [unused files](#stored-files).
+
+**Jobs share their work.** Every `POST /videos` gets a job of its own, but jobs for the same video, censor config and
+`format` share one download, one censoring pass and one censored file. A video is the same when it has the same
+`video_url`, or the same content (an upload, or a downloaded `video_url` once it is downloaded). So when a page with a
+video is reloaded, or two pages show it, it is censored once; a job that joins finished work is `done` straight away.
+A request without a `config` uses the profile's censor config; once `censor_config.yml` changes, it is other work.
+Failed or cancelled work is not shared: a new job starts over (its detections come from the cache).
+
+A job is kept for **1 hour** after its work finished (or after the job was created, if it joined finished work); then
+it is removed. The files of the work (the uploaded and the censored video) are removed once no job uses them. Jobs are
+kept in memory: restarting the server forgets them; their files are then removed like other
+[unused files](#stored-files).
 
 ### POST /videos
 
@@ -305,7 +316,9 @@ Takes the same parts as [`/censor_video`](#post-censor_video) and answers `202 A
   `/censor_video`.
 - A `video_url` is downloaded in the background (state `downloading`); a failed download makes the job `failed`
   with code `download_failed` or `url_not_allowed`.
-- At most 20 jobs can be downloading, waiting or running at the same time. Beyond that, the request is refused with
+- A job for a video that is already being censored (or was, less than an hour ago) shares that work, see
+  [Video jobs](#video-jobs). An upload is then not kept.
+- At most 20 videos can be downloading, waiting or running at the same time. Beyond that, the request is refused with
   `429` and code `queue_full` before the video is received.
 
 ### The job
@@ -343,12 +356,9 @@ Takes the same parts as [`/censor_video`](#post-censor_video) and answers `202 A
 | `filename`       | Name of the censored video, once the video is there. |
 | `video`          | Frame count, fps, duration (seconds) and size of the uploaded video, once it is there. |
 | `processing_ms`  | Time from start to finish of the censoring, once finished. |
-| `expires_at`     | When the finished job and its files are removed. |
+| `expires_at`     | When the job is removed (1 hour after its work finished, or after it joined finished work). |
 | `result_url`     | Where to fetch the censored video, once done. |
 | `error`, `code`  | Only when `failed`: why, with an [error code](#errors) such as `processing_failed` or `download_failed`. |
-
-`phase`, `progress`, `frames_done` and `frames_total` need the Python backend. With the C++ backend (`censor_core`
-2.0) they are `null` while the job runs; `state` and `queue_position` still work.
 
 ### GET /videos
 
@@ -366,13 +376,14 @@ failed or cancelled job it is `409` with code `job_failed`.
 
 ### DELETE /videos/&lt;id&gt;
 
-Removes the job and its files, and answers with the job as it was (`state` is `cancelled` for a job that had not
-finished):
+Removes the job, and answers with it as it was (`state` is `cancelled` for a job whose work had not finished). Only
+this job is removed: work that other jobs share goes on for them. When it was the last job of the work:
 
-- A job that is downloading or waiting is stopped straight away; it never runs.
-- A running job is stopped within a moment with the Python backend. The C++ backend cannot stop a running video: it
-  runs to the end in the background (other videos wait for it), and its files are removed then.
-- A finished job is removed with its files.
+- Finished work is removed with its files.
+- Work that is still downloading, waiting or running goes on for `server_video_job_grace_seconds`
+  ([config.yml](config.md#http-server), 30 by default), so that a reloaded page can take it over with a new
+  `POST /videos` for the same video. If no job comes in that time, it is stopped (a running video within a moment)
+  and its files are removed. With `0` it is stopped straight away.
 
 ## GET /video_formats
 
@@ -400,8 +411,10 @@ A WebSocket for real-time censoring, e.g. of a video playing in the browser. Eac
 - The image is any encoded image (e.g. JPEG or WebP). Censored frames are returned as `[header][WebP bytes]`.
 - Frames are censored with the profile's censor config, several at a time, and may come back out of order.
   Frames identical to one seen earlier are answered from memory.
-- **Cancel**: a message whose first byte is `1` cancels every frame still in progress. Those frames are not sent
-  back. Frames sent after it are censored as usual.
+- **Cancel**: a message whose first byte is `1` cancels frames still in progress. If its bytes 1–8 are not all zero,
+  only the frames whose header has the same bytes 1–8 are cancelled (the extension puts a video id and a seek id
+  there, so a seek in one video leaves the others alone); otherwise, or when the message is shorter than 9 bytes,
+  every frame is cancelled. Cancelled frames are not sent back. Frames sent after it are censored as usual.
 - **Errors**: a frame that cannot be censored (not an image, or censoring failed) is answered with a text message
   that has its header, as hex:
 
@@ -626,8 +639,9 @@ Checks a censor config the same way a censor request does, without censoring any
   `invalid_config` or `config_not_allowed`. The status is `200` either way.
 - `warnings` lists what the server ignores or fills in: unknown keys, labels no model produces, left-out settings
   that get a default.
-- `clip_to` labels that no model produces are errors. With the Python backend, `shape: mask` and `clip_to` on a
-  label of a detect (not segmentation) model are errors too; the C++ backend reports those only when censoring.
+- `clip_to` labels that no model produces are errors, and so are `shape: mask` and `clip_to` on a label of a detect
+  (not segmentation) model. (`censor_core` 2.0 does not tell which models segment, so with it those two are reported
+  only when censoring.)
 
 ## GET /stickers
 

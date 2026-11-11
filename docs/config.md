@@ -46,3 +46,5 @@ filled in for every `ai_remove` style in the censor config that doesn't set them
 | Key                           | Default | Description |
 |-------------------------------|---------|-------------|
 | `server_file_retention_hours` | `24`    | Files the HTTP server keeps in `data/server/` (uploaded, downloaded and censored images, video files) are removed once they have not been used for this many hours. Fetching a censored image counts as a use. `0` keeps them forever. Optional. See [Stored files](http_api.md#stored-files). |
+| `server_video_job_grace_seconds` | `30` | A [video job](http_api.md#video-jobs) shares its work with the other jobs for the same video. Work that is still running when its last job is deleted (e.g. the page with the video was closed) goes on for this many seconds, so a reloaded page can take it over. `0` stops it at once. Optional. |
+| `server_max_video_download_mb` | `500` | The largest video the server downloads for a `video_url` (`/censor_video` and `/videos`), in MB. Larger videos fail with `download_failed`. Optional. |

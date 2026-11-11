@@ -129,6 +129,30 @@ async def test_cancel_drops_the_frames_in_progress(stream):
     assert (await stats(stream))["frames_sent"] == 1
 
 
+def frame_header(video_id: int, seek_id: int, frame_num: int) -> bytes:
+    """A header as the extension builds it: type, video id, seek id, frame number (big-endian)."""
+    return bytes([0]) + video_id.to_bytes(4, "big") + seek_id.to_bytes(4, "big") + frame_num.to_bytes(4, "big")
+
+
+@pytest.mark.asyncio
+async def test_cancel_with_a_key_drops_only_the_frames_of_that_video_and_seek(stream):
+    stream.pipeline.auto_finish = False
+    await stream.send_bytes(frame_header(1, 0, 0) + b"a")   # video 1, seek 0: cancelled
+    await stream.send_bytes(frame_header(1, 0, 1) + b"b")   # video 1, seek 0: cancelled
+    await stream.send_bytes(frame_header(1, 1, 2) + b"c")   # video 1, a later seek: kept
+    await stream.send_bytes(frame_header(2, 0, 0) + b"d")   # another video: kept
+    assert (await stats(stream))["active_jobs"] == 4
+
+    await stream.send_bytes(bytes([1]) + (1).to_bytes(4, "big") + (0).to_bytes(4, "big") + bytes(4))
+    reply = await stats(stream)
+    assert reply["active_jobs"] == 2 and reply["frames_cancelled"] == 2
+    assert [job.cancelled for job in stream.pipeline.jobs] == [True, True, False, False]
+
+    stream.pipeline.release()
+    received = {await stream.receive_bytes(timeout=2), await stream.receive_bytes(timeout=2)}
+    assert received == {frame_header(1, 1, 2) + b"censored", frame_header(2, 0, 0) + b"censored"}
+
+
 @pytest.mark.asyncio
 async def test_failed_frames_get_an_error_with_their_header(stream):
     await stream.send_bytes(HEADER + b"fail")

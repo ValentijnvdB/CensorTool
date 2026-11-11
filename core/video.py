@@ -1,8 +1,9 @@
-"""Video pipeline: VideoJob and VideoPipeline. Same API as censor_core 2.0. Needs ffmpeg/ffprobe on PATH."""
+"""Video pipeline: VideoJob and VideoPipeline. Same API as censor_core 2.2. Needs ffmpeg/ffprobe on PATH."""
 from __future__ import annotations
 
 import math
 import subprocess
+import sys
 import threading
 import uuid
 from collections import deque
@@ -71,13 +72,13 @@ class VideoJob:
         self._error: Optional[str] = None
         self._result: Optional[str] = None
 
-        # Progress, updated while VideoPipeline.submit() runs (Python backend only; censor_core 2.0 has none).
+        # Progress, updated while VideoPipeline.submit() runs (censor_core has it since 2.1).
         self._cancelled = threading.Event()
         self._phase: Optional[str] = None   # None before it starts, then one of PHASES
         self._frames_done = 0               # of the current phase
         self._frames_total = 0
 
-    # ------------------------------------ progress (Python backend only) ------------------------------------
+    # ------------------------------------ progress and cancel ------------------------------------
     PHASES = ('detecting', 'censoring', 'encoding', 'done')
     """detecting: running the models on the frames that need it; censoring: drawing the censor on every frame;
     encoding: writing the output file; done: finished (also after an error or cancel)."""
@@ -269,10 +270,12 @@ class VideoPipeline:
                 if not job.override_cache:
                     cache = read_video_cache(cache_path)
 
-            self._run_detection(job, cap, video_fps, num_frames, cache, fingerprints)
-
-            if cache_path is not None:
-                write_video_cache(cache_path, cache)
+            try:
+                self._run_detection(job, cap, video_fps, num_frames, cache, fingerprints)
+            finally:
+                # Also after a cancel or an error: the next job only detects the frames still missing.
+                if cache_path is not None:
+                    self._save_cache(cache_path, cache)
 
             if job.early_exit:
                 job._success = True
@@ -292,6 +295,15 @@ class VideoPipeline:
 
         job._result = job.output_path
         job._success = True
+
+    @staticmethod
+    def _save_cache(cache_path: Path, cache: VideoCache) -> None:
+        try:
+            write_video_cache(cache_path, cache)
+        except OSError as e:
+            # A cache that can't be written costs time later, but must not fail (or hide the error of) the job.
+            print(f"[censor_core] WARNING: could not write the video cache {cache_path}: {e}", file=sys.stderr,
+                  flush=True)
 
     # ------------------------------------ detection pass ------------------------------------
     def _run_detection(self, job: VideoJob, cap: cv2.VideoCapture, video_fps: float, num_frames: int,

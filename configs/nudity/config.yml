@@ -57,3 +57,12 @@ comfy_workflow: "./data/workflow.json"
 #### are removed once they have not been used for this many hours.
 #### Fetching a censored image counts as a use. 0 keeps them forever.
 server_file_retention_hours: 24
+
+#### HTTP server: video jobs (POST /videos). Jobs for the same video,
+#### censor config and format share the work. Work that is still running
+#### when its last job is deleted (e.g. the page was closed) goes on for
+#### this many seconds, so a reloaded page can take it over. 0 stops it at once.
+server_video_job_grace_seconds: 30
+
+#### The largest video the server downloads for a video_url, in MB.
+server_max_video_download_mb: 500

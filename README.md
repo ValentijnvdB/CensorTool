@@ -374,7 +374,7 @@ Censoring is done by one of two backends. Both have the same features and read t
 | Backend | Install | Notes |
 |---------|---------|-------|
 | `python` | Included. | The default. Pure Python on top of ONNX Runtime and OpenCV. |
-| `cpp` | Build and install `censor_core` 2.0, e.g. `pip install /path/to/PyCensorCore`. | Faster, mostly noticeable in live and video censoring and on large batches of files. |
+| `cpp` | Build and install `censor_core` 2.2 or newer, e.g. `pip install /path/to/PyCensorCore`. Older versions are refused at startup. | Faster, mostly noticeable in live and video censoring and on large batches of files. |
 
 Pick one with `backend:` in `pipeline.yml`. If `cpp` is selected but `censor_core` is not installed, Censor Tool
 stops with an error instead of switching backends. `python main.py validate` shows which backend is used.

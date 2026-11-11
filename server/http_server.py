@@ -30,15 +30,15 @@ from .censor_config_schema import censor_config_schema
 from .errors import (ApiError, CONFIG_NOT_ALLOWED, INTERNAL_ERROR, INVALID_CONFIG, INVALID_REQUEST, INVALID_VIDEO,
                      JOB_FAILED, NOT_FOUND, NOT_READY, PROCESSING_FAILED, error_body, error_response)
 from . import helpers
-from .helpers import (_relative, check_censor_config, clear_cache, get_cache_info, get_default_censor_config,
-                      get_health, get_labels, get_profile, get_sticker_file, get_stickers, inspect_censor_config,
+from .helpers import (_relative, censor_config_key, check_censor_config, clear_cache, get_cache_info,
+                      get_default_censor_config, get_health, get_labels, get_profile, get_sticker_file, get_stickers, inspect_censor_config,
                       make_video_job, start_pipeline, stop_pipeline, submit_censoring_job, submit_detection_job,
                       submit_video_job, unique_path, wait_for_job)
 from .response_constructor import construct_body, construct_response
 from .server_config import CACHE_DIR, CENSORED_PATH, UPLOAD_DIR
 from . import server_config, storage
 from .utils import np_to_bytes
-from .video_jobs import VideoJobRecord, video_jobs
+from .video_jobs import VideoJobRecord, VideoWork, video_jobs
 
 
 def api_handler(handler):
@@ -50,6 +50,8 @@ def api_handler(handler):
         except ApiError as e:
             if e.status >= 500:
                 logger.warning(f"{handler.__name__}: {e}")
+            else:
+                logger.info(f"{handler.__name__}: refused ({e.code}): {e}")
             return e.to_response()
         except CensorConfigError as e:
             return error_response(str(e), CONFIG_NOT_ALLOWED, 400)
@@ -373,7 +375,12 @@ def prepare_video(vr: VideoRequest) -> VideoInfo:
     try:
         if vr.video_url is not None and vr.path is None:
             vr.path = unique_path(UPLOAD_DIR, vr.name)
-            rr.download_video(vr.video_url, vr.path, vr.digest, stop=vr.stop)
+            logger.info(f"Downloading video {vr.video_url}")
+            started = time.perf_counter()
+            rr.download_video(vr.video_url, vr.path, round(CONFIG.server_max_video_download_mb * 2**20), vr.digest,
+                              stop=vr.stop)
+            logger.info(f"Downloaded video {vr.video_url}: {vr.path.stat().st_size / 2**20:.1f} MB in "
+                        f"{time.perf_counter() - started:.1f} s")
         if vr.path.stat().st_size == 0:
             raise ApiError("The video is empty.")
         info = read_video_info(vr.path)
@@ -385,12 +392,14 @@ def prepare_video(vr: VideoRequest) -> VideoInfo:
         raise
 
 
-def reserve_output(vr: VideoRequest) -> tuple[Path, Path]:
-    """Where the censored video goes (a reserved, unique name), and the cache folder for its detections."""
-    output_path = unique_path(CENSORED_PATH, vr.path.with_suffix('.' + vr.video_format).name)
-    # cached per content, so a different video uploaded under a used name never gets the old detections
-    cache_dir = CACHE_DIR / 'videos' / vr.digest.hexdigest()[:32]
-    return output_path, cache_dir
+def reserve_output(vr: VideoRequest) -> Path:
+    """Where the censored video goes (a reserved, unique name)."""
+    return unique_path(CENSORED_PATH, vr.path.with_suffix('.' + vr.video_format).name)
+
+
+def video_cache_dir() -> Path:
+    """The folder of the video detection caches; the backend names each after the video's contents."""
+    return CACHE_DIR / 'videos'
 
 
 async def stream_video(request, output_path: Path, video_format: str, info: VideoInfo,
@@ -427,10 +436,10 @@ async def censor_video(request):
     vr = await read_video_request(request)
     info = await asyncio.to_thread(prepare_video, vr)
 
-    output_path, cache_dir = reserve_output(vr)
+    output_path = reserve_output(vr)
     try:
         result = await submit_video_job(video_path=vr.path, output_path=output_path, censor_config=vr.config,
-                                        early_exit=False, cache_dir=cache_dir)
+                                        early_exit=False, cache_dir=video_cache_dir())
         if not result.success:
             raise ApiError(f"Censoring failed: {result.error}", PROCESSING_FAILED, 500)
         return await stream_video(request, Path(result.result), vr.video_format, info, elapsed_ms(started))
@@ -444,35 +453,51 @@ async def censor_video(request):
 
 @api_handler
 async def create_video_job(request):
-    """Start censoring a video in the background; poll GET /videos/{id} and fetch GET /videos/{id}/result."""
+    """
+    Start censoring a video in the background; poll GET /videos/{id} and fetch GET /videos/{id}/result. A job for a
+    video that is being (or was) censored with the same censor config and format shares that work (see video_jobs).
+    """
     video_jobs.check_capacity()  # before receiving the video
     vr = await read_video_request(request)
+    config_key = censor_config_key(vr.config)
+    digest = vr.digest.hexdigest() if vr.video_url is None else None   # an upload is there already
+
+    record = video_jobs.join(config_key, vr.video_format, url=vr.video_url, digest=digest)
+    if record is not None:
+        vr.remove_input()   # the shared work has its own copy
+        return video_job_response(record)
+
     info = None
     if vr.video_url is None:  # an upload: check it now, so a bad video is a 400 straight away
         info = await asyncio.to_thread(prepare_video, vr)
 
-    async def prepare(record: VideoJobRecord):
+    async def prepare(work: VideoWork):
         if info is not None:
-            record.info = info
+            work.info = info
         else:
             download = asyncio.ensure_future(asyncio.to_thread(prepare_video, vr))
             try:
-                record.info = await asyncio.shield(download)
+                work.info = await asyncio.shield(download)
             except asyncio.CancelledError:
                 vr.stop.set()  # stop the download, and remove what it got
                 await asyncio.gather(download, return_exceptions=True)
                 vr.remove_input()
                 raise
-        record.input_path = vr.path
-        record.output_path, cache_dir = reserve_output(vr)
-        return make_video_job(vr.path, record.output_path, vr.config, cache_dir)
+            work.digest = vr.digest.hexdigest()   # later uploads of the same video share this work too
+        work.input_path = vr.path
+        work.output_path = reserve_output(vr)
+        return make_video_job(vr.path, work.output_path, vr.config, video_cache_dir())
 
     try:
-        record = video_jobs.create(vr.video_format, VIDEO_FORMATS[vr.video_format], vr.video_url is not None,
-                                   prepare)
+        record = video_jobs.create(vr.video_format, VIDEO_FORMATS[vr.video_format], prepare, config_key=config_key,
+                                   url=vr.video_url, digest=digest)
     except ApiError:
         vr.remove_input()
         raise
+    return video_job_response(record)
+
+
+def video_job_response(record: VideoJobRecord) -> web.Response:
     return web.json_response({'status': 'success', 'job': record.to_dict()}, status=202,
                              headers={'Location': f'/videos/{record.id}'})
 
@@ -698,23 +723,37 @@ class FrameStream:
         else:
             await self.send_error(f"Unknown message type '{kind}'.")
 
+    def cancel(self, stream_key: bytes | None = None):
+        """
+        Cancel frames in progress; they are not sent back. With a stream_key, only the frames whose header bytes 1-8
+        are that key (the extension's video id and seek id), else every frame.
+        """
+        if stream_key is None:
+            cancelled, self.pending = self.pending, []
+        else:
+            cancelled = [f for f in self.pending if f.header[1:9] == stream_key]
+            self.pending = [f for f in self.pending if f.header[1:9] != stream_key]
+        for frame in cancelled:
+            frame.job.cancel()
+        self.counts['frames_cancelled'] += len(cancelled)
+        logger.info(f"Cancelled {len(cancelled)} frame(s)")
+
     def cancel_all(self):
         """Cancel every frame in progress; they are not sent back."""
-        for frame in self.pending:
-            frame.job.cancel()
-        self.counts['frames_cancelled'] += len(self.pending)
-        logger.info(f"Cancelled {len(self.pending)} frame(s)")
-        self.pending.clear()
+        self.cancel(None)
+
+    def on_cancel(self, data: bytes):
+        """A cancel message: its bytes 1-8 select the frames to cancel; missing or all zero cancels every frame."""
+        key = data[1:9]
+        self.cancel(key if len(key) == 8 and any(key) else None)
 
     async def on_frame(self, data: bytes):
+        if data[:1] == b'\x01':
+            return self.on_cancel(data)
         if len(data) <= self.HEADER_SIZE:
-            if data[:1] == b'\x01':
-                return self.cancel_all()
             return await self.send_error(f"A frame needs a {self.HEADER_SIZE}-byte header and an image.")
 
         header = data[:self.HEADER_SIZE]
-        if header[0] == 1:
-            return self.cancel_all()
 
         self.counts['frames_received'] += 1
         image_bytes = data[self.HEADER_SIZE:]
@@ -741,7 +780,7 @@ class FrameStream:
                 break
 
     async def finish(self, frame: _PendingFrame):
-        job = frame.handle.wait()  # done already
+        job = helpers.job_result(frame.handle)  # done already
         if not job.success:
             self.counts['frames_failed'] += 1
             logger.warning(f"Error censoring frame: {job.error}")

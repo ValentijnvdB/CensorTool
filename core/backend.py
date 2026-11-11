@@ -10,13 +10,17 @@ selected backend on first use. Call select() before that, e.g. from the 'backend
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import importlib.util
+import re
 import threading
 from types import ModuleType
 from typing import Any
 
 BACKENDS = ('python', 'cpp')
 DEFAULT_BACKEND = 'python'
+MIN_CENSOR_CORE = (2, 2)
+"""Oldest censor_core the cpp backend works with: 2.2 caches videos by content and saves them when cancelled."""
 
 _lock = threading.Lock()
 _name: str | None = None
@@ -31,11 +35,28 @@ def _load(name: str) -> ModuleType:
     if name == 'python':
         return importlib.import_module('core')
     try:
-        return importlib.import_module('censor_core')
+        module = importlib.import_module('censor_core')
     except ImportError as e:
         raise BackendError(
             "backend 'cpp' needs the censor_core module, which is not installed. Build and install it (e.g. "
             "pip install /path/to/PyCensorCore), or set 'backend: python' in pipeline.yml.") from e
+    version = _censor_core_version()
+    if version is not None and version < MIN_CENSOR_CORE:
+        wanted = '.'.join(map(str, MIN_CENSOR_CORE))
+        raise BackendError(
+            f"backend 'cpp' needs censor_core {wanted} or newer, but {importlib.metadata.version('censor_core')} is "
+            f"installed. Install a newer one (e.g. pip install /path/to/PyCensorCore), or set 'backend: python' in "
+            f"pipeline.yml.")
+    return module
+
+
+def _censor_core_version() -> tuple[int, int] | None:
+    """(major, minor) of the installed censor_core, or None if it can't be told."""
+    try:
+        match = re.match(r'(\d+)\.(\d+)', importlib.metadata.version('censor_core'))
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    return (int(match[1]), int(match[2])) if match else None
 
 
 def normalize(name: Any) -> str:

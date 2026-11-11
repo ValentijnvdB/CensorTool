@@ -61,6 +61,8 @@ class Config:
 
     # optional (may be left out of config.yml)
     server_file_retention_hours: float      = 24  # HTTP server: remove files unused this long; 0 keeps them
+    server_video_job_grace_seconds: float   = 30  # HTTP server: video work without jobs goes on this long
+    server_max_video_download_mb: float     = 500  # HTTP server: largest video it downloads (video_url)
 
     # --- from the command line ---
     debug: bool                             = False
@@ -337,7 +339,8 @@ def read_censor_config_from_file_w_hash(path: Path = None, prev_hash: str = None
 
 
 _CONFIG_KEYS = ('video_censor_fps', 'comfy_host', 'comfy_port', 'comfy_workflow')
-_OPTIONAL_CONFIG_KEYS = ('server_file_retention_hours',)
+_OPTIONAL_CONFIG_KEYS = ('server_file_retention_hours', 'server_video_job_grace_seconds',
+                         'server_max_video_download_mb')
 _LIVE_KEYS = tuple(f.name for f in fields(LiveCensorConfig))
 _OPTIONAL_LIVE_KEYS = ('input_size', 'frames_in_flight')
 
@@ -390,9 +393,14 @@ def validate_config(config: Config):
         raise ValueError(f"video_censor_fps must be >= 0, got {config.video_censor_fps!r}.")
     if not is_int(config.comfy_port):
         raise ValueError(f"comfy_port must be an integer, got {config.comfy_port!r}.")
-    retention = config.server_file_retention_hours
-    if isinstance(retention, bool) or not isinstance(retention, (int, float)) or retention < 0:
-        raise ValueError(f"server_file_retention_hours must be >= 0, got {retention!r}.")
+    def is_number(value) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    for name in ('server_file_retention_hours', 'server_video_job_grace_seconds'):
+        if not is_number(getattr(config, name)) or getattr(config, name) < 0:
+            raise ValueError(f"{name} must be >= 0, got {getattr(config, name)!r}.")
+    if not is_number(config.server_max_video_download_mb) or config.server_max_video_download_mb <= 0:
+        raise ValueError(f"server_max_video_download_mb must be > 0, got {config.server_max_video_download_mb!r}.")
 
     live = config.live
     for name in ('cap_top', 'cap_left'):

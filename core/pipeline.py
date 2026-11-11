@@ -1,4 +1,4 @@
-"""Image pipeline: Job, JobHandle, ImagePipeline and wait_any. Same API as censor_core 2.0."""
+"""Image pipeline: Job, JobHandle, ImagePipeline and wait_any. Same API as censor_core 2.2."""
 from __future__ import annotations
 
 import hashlib
