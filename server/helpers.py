@@ -90,7 +90,8 @@ _video_lock: asyncio.Lock | None = None
 def start_pipeline(debug: bool):
     global _debug, _image_pipeline, _video_pipeline, _default_censor_config, _started_at
     _default_censor_config = read_censor_config_from_file()
-    _image_pipeline = make_image_pipeline(mode='s')
+    # 'p': independent models run in parallel, as in the app's live mode (faster frames for /censor_frame)
+    _image_pipeline = make_image_pipeline(mode='p')
     _image_pipeline.start()
     _video_pipeline = cc.VideoPipeline(_image_pipeline)
     _debug = debug

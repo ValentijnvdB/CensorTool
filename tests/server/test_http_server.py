@@ -984,7 +984,7 @@ class TestCensorFrameConfig:
         app.router.add_get('/censor_frame', hs.censor_frame)
         with patch("server.http_server.submit_censoring_job", side_effect=submit), \
                 patch("server.http_server.cc", fake_cc), \
-                patch("server.http_server.np_to_bytes", side_effect=lambda img, ext: b"censored:" + img):
+                patch("server.http_server.np_to_bytes", side_effect=lambda img, ext, quality=None: b"censored:" + img):
             client = TestClient(TestServer(app))
             await client.start_server()
             ws = await client.ws_connect('/censor_frame')

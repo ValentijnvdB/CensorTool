@@ -51,7 +51,7 @@ async def stream():
     app = aio_web.Application()
     app.router.add_get('/censor_frame', hs.censor_frame)
     with patch("server.http_server.submit_censoring_job", side_effect=pipeline.submit), \
-            patch("server.http_server.np_to_bytes", side_effect=lambda img, ext: b"censored"):
+            patch("server.http_server.np_to_bytes", side_effect=lambda img, ext, quality=None: b"censored"):
         client = TestClient(TestServer(app))
         await client.start_server()
         ws = await client.ws_connect('/censor_frame')
@@ -220,3 +220,15 @@ def test_remembered_frames_are_capped_oldest_first():
 
     fs.remember("d", (b"x" * 50, [], 1, 1))
     assert list(fs.remembered) == ["d"]     # the newest frame stays, even when too big
+
+
+def test_frames_are_encoded_as_jpeg_with_a_quality():
+    import cv2
+    from server.utils import np_to_bytes
+
+    image = np.random.randint(0, 255, (36, 64, 3), dtype=np.uint8)
+    encoded = np_to_bytes(image, ".jpg", 85)
+    assert encoded[:3] == b"\xff\xd8\xff"
+    assert cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_COLOR).shape == image.shape
+    # lossy WebP with a quality is much smaller than OpenCV's lossless default
+    assert len(np_to_bytes(image, ".webp", 50)) < len(np_to_bytes(image, ".webp"))

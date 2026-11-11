@@ -648,7 +648,9 @@ class FrameStream:
     """One /censor_frame connection."""
 
     HEADER_SIZE = 13
-    EXTENSION = '.webp'
+    # Censored frames go back as JPEG: about 2 ms for a 1080p frame (lossless WebP took about 200 ms).
+    EXTENSION = '.jpg'
+    QUALITY = 85
     FPS_WINDOW = 10  # seconds
     REMEMBER_BYTES = 256 * 1024 * 1024  # censored frames kept for repeats (e.g. seeking back); oldest go first
 
@@ -793,7 +795,7 @@ class FrameStream:
             return await self.send_error(f"Censoring failed: {job.error}", PROCESSING_FAILED, frame.header)
 
         censored = job.result['image']
-        buffer = await asyncio.to_thread(np_to_bytes, censored, self.EXTENSION)
+        buffer = await asyncio.to_thread(np_to_bytes, censored, self.EXTENSION, self.QUALITY)
         width, height = image_size(censored) if hasattr(censored, 'shape') else (0, 0)
         remembered = (buffer, job.result.get('detections', []), width, height)
         self.remember(frame.image_hash, remembered)
@@ -810,7 +812,18 @@ class FrameStream:
             _, dropped = self.remembered.popitem(last=False)
             self.remembered_bytes -= len(dropped[0])
 
+    async def _finish_logged(self, frame: _PendingFrame):
+        try:
+            await self.finish(frame)
+        except Exception as e:
+            logger.error(f"Error sending frame: {e}")
+
     async def sender(self):
+        """
+        Send the frames as they are done. Each is encoded in its own task, so encoding one frame doesn't hold up
+        the next; frames can therefore also go out in another order than they finished.
+        """
+        sending: set[asyncio.Task] = set()
         while not self.ws.closed and not self.stopped:
             done = [frame for frame in self.pending if frame.handle.done()]
             if not done:
@@ -820,11 +833,12 @@ class FrameStream:
                 if frame not in self.pending:  # cancelled meanwhile
                     continue
                 self.pending.remove(frame)
-                try:
-                    await self.finish(frame)
-                except Exception as e:
-                    logger.error(f"Error sending frame: {e}")
+                task = asyncio.create_task(self._finish_logged(frame))
+                sending.add(task)
+                task.add_done_callback(sending.discard)
             logger.debug(f"Current fps: {self.fps()}. Active jobs: {len(self.pending)}")
+        if sending:
+            await asyncio.gather(*sending, return_exceptions=True)
 
     async def run(self):
         receiver = asyncio.create_task(self.receiver())

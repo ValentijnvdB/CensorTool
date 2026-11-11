@@ -408,7 +408,7 @@ A WebSocket for real-time censoring, e.g. of a video playing in the browser. Eac
 - The header is sent back unchanged with the censored frame, so the client can use it to match frames (e.g. a
   frame number and timestamp). The server only looks at the first byte: `1` means "cancel", any other value is a
   frame.
-- The image is any encoded image (e.g. JPEG or WebP). Censored frames are returned as `[header][WebP bytes]`.
+- The image is any encoded image (e.g. JPEG or WebP). Censored frames are returned as `[header][JPEG bytes]`.
 - Frames are censored with the profile's censor config, several at a time, and may come back out of order.
   Frames identical to one seen earlier are answered from memory.
 - **Cancel**: a message whose first byte is `1` cancels frames still in progress. If its bytes 1–8 are not all zero,
