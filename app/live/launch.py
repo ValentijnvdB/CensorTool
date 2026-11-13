@@ -12,6 +12,7 @@ Windows the program opens later (dialogs, more windows) are found the same way b
 from __future__ import annotations
 
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -42,7 +43,7 @@ def program_names(command: list[str]) -> set[str]:
     for token in command:
         if token.startswith('-') or '=' in token:  # options and environment assignments (env FOO=1 prog)
             continue
-        name = Path(token).name.lower()
+        name = Path(token.replace("\\", "/")).name.lower()  # also Windows paths, C:\...\vlc.exe
         if not name:
             continue
         names.add(name)
@@ -51,9 +52,15 @@ def program_names(command: list[str]) -> set[str]:
     return names - WRAPPERS
 
 
+# file extensions of programs on Windows: vlc.exe is the program vlc
+EXECUTABLE_SUFFIXES = ('.exe', '.com', '.bat', '.cmd')
+
+
 def _name_variants(name: str) -> set[str]:
     """A name and its last dotted part: io.github.celluloid_player.Celluloid -> also celluloid."""
     name = name.lower()
+    if name.endswith(EXECUTABLE_SUFFIXES):
+        name = name.rsplit('.', 1)[0]
     return {name, name.rsplit('.', 1)[-1]}
 
 
@@ -90,14 +97,18 @@ def choose_existing_window(existing: list[WindowInfo], names: set[str]) -> int |
 def start_program(command: list[str], show_output: bool = False,
                   env: dict[str, str] | None = None) -> subprocess.Popen:
     """
-    Start the program in its own session, so Ctrl+C in the terminal and quitting overlay mode leave it running.
+    Start the program in its own session (Windows: process group), so Ctrl+C in the terminal and quitting overlay
+    mode leave it running.
 
     :param env: its environment, None for this process's.
     """
     output = None if show_output else subprocess.DEVNULL
+    if sys.platform == 'win32':
+        detach = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        detach = {'start_new_session': True}
     try:
-        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=output,
-                                start_new_session=True, env=env)
+        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=output, env=env, **detach)
     except FileNotFoundError:
         raise LaunchError(f"Program not found: {command[0]}") from None
     except PermissionError:

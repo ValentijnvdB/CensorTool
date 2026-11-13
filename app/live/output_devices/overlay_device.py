@@ -209,6 +209,7 @@ class OverlayDevice(OutputDevice):
         if not window.isVisible():
             window.show()
             window.setGeometry(rect)  # the window manager may have placed it elsewhere when mapping it
+            self._window_system.overlay_shown(window.windowHandle(), client)
 
     def close(self):
         with self._lock:

@@ -24,7 +24,7 @@ import numpy as np
 from loguru import logger
 
 from .base import (Area, Display, FocusTracker, Grabber, TargetState, Tracker, WindowChanges, WindowInfo,
-                   WindowMonitor, WindowSystem, WindowSystemError)
+                   WindowMonitor, WindowSystem, WindowSystemError, window_at)
 
 Window = Drawable = Pixmap = Atom = Cursor = Time = ctypes.c_ulong
 
@@ -655,14 +655,6 @@ class ActiveWindowTracker(threading.Thread, FocusTracker):
 
 
 # ------------------------------------------------------------------ picking a window
-
-def window_at(stack: list[tuple[int, tuple[int, int, int, int]]], x: int, y: int, exclude: set[int]) -> int | None:
-    """The topmost window of stack (bottom to top, (window, (x, y, w, h))) that contains (x, y)."""
-    for win, (wx, wy, ww, wh) in reversed(stack):
-        if win not in exclude and wx <= x < wx + ww and wy <= y < wy + wh:
-            return win
-    return None
-
 
 def pick_window(exclude: set[int] = frozenset(), cancel: threading.Event | None = None) -> int | None:
     """

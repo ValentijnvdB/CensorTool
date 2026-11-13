@@ -58,10 +58,10 @@ class TestSessionProblem:
         assert 'Wayland' in x11.session_problem()
 
     def test_other_platforms_are_refused(self, monkeypatch):
-        monkeypatch.setattr(windowing.sys, 'platform', 'win32')
-        assert 'win32' in windowing.session_problem()
+        monkeypatch.setattr(windowing.sys, 'platform', 'darwin')
+        assert 'darwin' in windowing.session_problem()
         monkeypatch.setattr(windowing, '_system', None)
-        with pytest.raises(windowing.WindowSystemError, match='win32'):
+        with pytest.raises(windowing.WindowSystemError, match='darwin'):
             windowing.get()
 
     def test_no_display(self, monkeypatch):

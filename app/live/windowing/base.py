@@ -196,3 +196,14 @@ class WindowSystem(ABC):
 
         :return: an object to keep as long as the overlay exists.
         """
+
+    def overlay_shown(self, overlay, win: int):
+        """Called each time the overlay of win was shown (e.g. to place it again if Qt changed its placement)."""
+
+
+def window_at(stack: list[tuple[int, Area]], x: int, y: int, exclude: set[int]) -> int | None:
+    """The topmost window of stack (bottom to top, (window, area)) that contains (x, y)."""
+    for win, (wx, wy, ww, wh) in reversed(stack):
+        if win not in exclude and wx <= x < wx + ww and wy <= y < wy + wh:
+            return win
+    return None

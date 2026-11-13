@@ -292,8 +292,16 @@ behind a dark placeholder instead; *Hidden windows* in the tray can censor it on
 or show it uncensored. Overlay mode also uses the live mode settings `live_input_size`, `live_frames_in_flight` and `live_show_fps`;
 the capture region `live_cap_*` is not used.
 
-Overlay mode works on Linux with an X11 session and a compositing window manager. It has been tested on Cinnamon
-(Linux Mint); Wayland, Windows and macOS are not supported yet.
+Overlay mode works on Linux with an X11 session. It has been tested on Cinnamon (Linux Mint); Wayland and macOS are
+not supported yet.
+
+**Windows (10 and 11) support is written but has not been run on Windows yet.** It captures windows with Windows
+Graphics Capture when the `windows-capture` package is installed (part of `requirements-overlay.txt`), and falls back
+to the slower PrintWindow, with which some programs come out black. On Windows 10 a yellow border shows around
+captured windows. Programs are matched by the name of their executable without `.exe` (`vlc`, `firefox`), and
+`--window` takes a window handle (HWND). To check what works on a computer, run
+`python -m app.live.windowing.selfcheck --pick`: it captures, follows and covers a window you click, step by step,
+and reports what fails.
 
 ### HTTP server
 

@@ -1,6 +1,7 @@
 """
 The window system overlay mode works with: capturing, following and picking windows, and noticing new ones.
-See base.py for what a platform has to provide; x11.py is the only implementation so far.
+See base.py for what a platform has to provide: x11.py implements it for Linux with X11, windows.py for Windows
+10/11 (not tested on Windows yet).
 """
 from __future__ import annotations
 
@@ -22,7 +23,10 @@ def session_problem() -> str | None:
     if sys.platform.startswith('linux'):
         from . import x11
         return x11.session_problem()
-    return f"Overlay mode only works on Linux with X11 for now, not on {sys.platform}."
+    if sys.platform == 'win32':
+        from . import windows
+        return windows.session_problem()
+    return f"Overlay mode works on Linux with X11 and on Windows, not on {sys.platform} (yet)."
 
 
 def get() -> WindowSystem:
@@ -37,6 +41,10 @@ def get() -> WindowSystem:
             problem = session_problem()
             if problem:
                 raise WindowSystemError(problem)
-            from .x11 import X11WindowSystem
-            _system = X11WindowSystem()
+            if sys.platform == 'win32':
+                from .windows import WindowsWindowSystem
+                _system = WindowsWindowSystem()
+            else:
+                from .x11 import X11WindowSystem
+                _system = X11WindowSystem()
         return _system

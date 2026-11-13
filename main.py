@@ -188,7 +188,7 @@ def get_mode_overview():
         "'file': censor images and videos from file."
         "'live': real time censoring. "
         "'webcam': real time webcam censoring. "
-        "'overlay': censor a window in place (Linux/X11). "
+        "'overlay': censor windows in place (Linux/X11; Windows untested). "
         "'http: start the http server."
     )
 
@@ -220,7 +220,7 @@ def main():
     # overlay mode
     overlay_parser = parser.add_argument_group(title='Overlay arguments')
     overlay_parser.add_argument('--window', default=None, type=window_id_arg, action='append',
-                                help='X11 id of a window to censor (e.g. from xwininfo or wmctrl -l); repeat it '
+                                help='Id of a window to censor (X11: from xwininfo or wmctrl -l; Windows: HWND); repeat it '
                                      'for more windows. If not given, you click the window.')
     overlay_parser.add_argument('--auto', nargs='*', action='extend', default=None, metavar='PROGRAM',
                                 help='Auto mode: censor every window of the programs in overlay_auto_programs '

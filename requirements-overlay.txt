@@ -1,2 +1,5 @@
-# Optional: needed for overlay mode (python main.py overlay), Linux with X11 only.
+# Optional: needed for overlay mode (python main.py overlay): Linux with X11, or Windows 10/11 (untested).
 PySide6
+# Windows: Windows Graphics Capture (falls back to PrintWindow without it) and process trees
+windows-capture; sys_platform == "win32"
+psutil; sys_platform == "win32"
