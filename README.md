@@ -242,6 +242,7 @@ read at startup.
 pip install -r requirements-overlay.txt   # once: installs PySide6
 python main.py overlay                    # then click the window to censor
 python main.py overlay --window 0x3a00007 # or give its id (from xwininfo or wmctrl -l)
+python main.py overlay -- celluloid --new-window ~/Videos/clip.mp4  # or start a program and censor its window
 ```
 
 `overlay` captures one window and shows it censored in an overlay that lies exactly over it, so you don't need a
@@ -252,6 +253,13 @@ menus and panels stay on top of it.
 The overlay is shown before the first frame is censored, so the window is never visible uncensored. Like live mode, the
 censored image lags slightly behind the window (the time it takes to censor a frame), which you notice when
 scrolling. Menus, dropdowns and tooltips of the censored window are separate windows and are not censored.
+
+Everything after `--` is a program to start; its first window is censored, and the program keeps running when
+overlay mode stops. Its window can be visible for a moment before the overlay covers it; add `--curtain` to cover
+your screens while the program starts. Programs that run only once, like Celluloid and Firefox, hand the file to
+the instance that is already running and exit. Overlay mode covers the program's open windows before starting it, so
+the new file isn't shown uncensored there, then censors that instance's window with a warning. Use the program's own
+option for a separate window, such as `celluloid --new-window`.
 
 A tray icon has *Select another window*, *Reload configs* and *Quit*; without a system tray, stop it with Ctrl+C.
 Overlay mode stops when the censored window is closed. It uses the same `config.yml` settings as live mode
@@ -294,6 +302,8 @@ The endpoints and their request and response formats are described in [docs/http
 | | `--vcam-w`, `--vcam-h` | `1920`, `1080` | Virtual camera size. |
 | | `--vcam-fps` | `10` | Virtual camera frame rate. |
 | Overlay | `--window` | click | X11 id of the window to censor, in hex (`0x3a00007`) or decimal. |
+| | `-- <command>` | - | Start this program and censor its window. Must come last. |
+| | `--curtain` | off | With `-- <command>`: cover the screens while the program starts. |
 | Server | `--host` | `localhost` | Address to listen on. Use `0.0.0.0` to accept connections from other devices. |
 | | `--port` | `8443` | Port to listen on. |
 | | `--ssl` | off | Use HTTPS. |

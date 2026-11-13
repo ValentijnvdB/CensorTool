@@ -131,10 +131,11 @@ def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_heig
     start_live_censor(device_id, use_vcam, vcam_width, vcam_height, vcam_fps, censor_config)
 
 
-def start_overlay_censor(window_id: int | None, censor_config: Path | str):
+def start_overlay_censor(window_id: int | None, censor_config: Path | str, command: list[str] | None,
+                         curtain: bool):
     from app.live.overlay import start_overlay_censor
     try:
-        start_overlay_censor(window_id, censor_config)
+        start_overlay_censor(window_id, censor_config, command=command, curtain=curtain)
     except (RuntimeError, ValueError) as e:
         logger.error(str(e))
         sys.exit(1)
@@ -146,6 +147,14 @@ def window_id_arg(value: str) -> int:
         return int(value, 0)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a window id: {value!r} (use e.g. 0x3a00007)") from None
+
+
+def split_command(argv: list[str]) -> tuple[list[str], list[str] | None]:
+    """Split the arguments at the first '--': (CensorTool's arguments, the command after it or None)."""
+    if '--' not in argv:
+        return argv, None
+    index = argv.index('--')
+    return argv[:index], argv[index + 1:]
 
 
 def serve_http(host, port, ssl_file, ssl_key, use_ssl, debug):
@@ -213,6 +222,9 @@ def main():
     overlay_parser.add_argument('--window', default=None, type=window_id_arg,
                                 help='X11 id of the window to censor (e.g. from xwininfo or wmctrl -l). '
                                      'If not given, you click the window.')
+    overlay_parser.add_argument('--curtain', action='store_true',
+                                help='With a command after --: cover the screens while the program starts, so its '
+                                     'window is never visible uncensored.')
 
     # flags
     flags_parser = parser.add_argument_group(title='General flags')
@@ -234,7 +246,20 @@ def main():
     server_parser.add_argument('--ssl-key', default=str(Path('certs') / 'key.pem'), type=str,
                                help='Path to key file.')
 
-    args = parser.parse_args()
+    parser.usage = '%(prog)s mode [options] [-- command ...]'
+    parser.epilog = ("overlay mode: everything after -- is a program to start and censor, e.g. "
+                     "'python main.py overlay -- celluloid --new-window video.mp4'.")
+    argv, command = split_command(sys.argv[1:])
+    args = parser.parse_args(argv)
+    if command is not None:
+        if args.mode != 'overlay':
+            parser.error("a command after -- can only be used with overlay mode")
+        if not command:
+            parser.error("no command after --")
+        if args.window is not None:
+            parser.error("use either --window or a command after --, not both")
+    elif args.curtain:
+        parser.error("--curtain needs a command after --")
     create_dirs()
 
     # Initialize the censor app
@@ -294,7 +319,8 @@ def main():
         )
 
     elif args.mode in ['overlay']:
-        start_overlay_censor(window_id=args.window, censor_config=args.censor_config)
+        start_overlay_censor(window_id=args.window, censor_config=args.censor_config, command=command,
+                             curtain=args.curtain)
 
     elif args.mode in ['f', 'file', 'files']:
         censor_files(

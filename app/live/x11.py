@@ -274,6 +274,51 @@ class Connection:
         self.x.XFree(prop)
         return values
 
+    def strings(self, win: int, name: str) -> list[str] | None:
+        """An 8-bit property split at NUL bytes (e.g. WM_CLASS), or None if it is not set."""
+        actual_type, actual_format = Atom(), ctypes.c_int()
+        nitems, after, prop = ctypes.c_ulong(), ctypes.c_ulong(), ctypes.c_void_p()
+        status = self.x.XGetWindowProperty(self.dpy, win, self.atom(name), 0, 1024, 0, 0, ctypes.byref(actual_type),
+                                           ctypes.byref(actual_format), ctypes.byref(nitems), ctypes.byref(after),
+                                           ctypes.byref(prop))
+        if status != 0 or not prop.value:
+            return None
+        values = []
+        if actual_format.value == 8:
+            data = ctypes.string_at(prop, nitems.value)
+            values = [v.decode('utf-8', 'replace') for v in data.split(b'\0') if v]
+        self.x.XFree(prop)
+        return values
+
+    def client_list(self, name: str = '_NET_CLIENT_LIST') -> list[int]:
+        """
+        The application windows the window manager manages: oldest first (_NET_CLIENT_LIST) or bottom to top
+        (_NET_CLIENT_LIST_STACKING).
+        """
+        actual_type, actual_format = Atom(), ctypes.c_int()
+        nitems, after, prop = ctypes.c_ulong(), ctypes.c_ulong(), ctypes.c_void_p()
+        status = self.x.XGetWindowProperty(self.dpy, self.root, self.atom(name), 0, 65536, 0, 0,
+                                           ctypes.byref(actual_type), ctypes.byref(actual_format),
+                                           ctypes.byref(nitems), ctypes.byref(after), ctypes.byref(prop))
+        if status != 0 or not prop.value:
+            return []
+        windows = []
+        if actual_format.value == 32:
+            windows = list(ctypes.cast(prop, ctypes.POINTER(ctypes.c_ulong))[:nitems.value])
+        self.x.XFree(prop)
+        return windows
+
+    def window_info(self, win: int) -> 'WindowInfo':
+        """The properties used to tell which program a window belongs to."""
+        pid = self.cardinals(win, '_NET_WM_PID', 1)
+        types = self.cardinals(win, '_NET_WM_WINDOW_TYPE', 1)
+        return WindowInfo(
+            window=win,
+            pid=pid[0] if pid else None,
+            wm_class=tuple(self.strings(win, 'WM_CLASS') or ()),
+            normal=not types or types[0] == self.atom('_NET_WM_WINDOW_TYPE_NORMAL'),
+        )
+
     def client_of(self, win: int) -> int | None:
         """The application window (with WM_STATE) of a toplevel: win itself or one of its children."""
         if self.cardinals(win, 'WM_STATE', 1) is not None:
@@ -290,6 +335,14 @@ class Connection:
         """
         x, y = self.root_position(client)
         return visible_area(x, y, attrs.width, attrs.height, self.cardinals(client, '_GTK_FRAME_EXTENTS', 4))
+
+
+@dataclass(frozen=True)
+class WindowInfo:
+    window: int
+    pid: int | None  # _NET_WM_PID: the process that made the window (not reliable for Flatpak/Snap apps)
+    wm_class: tuple[str, ...]  # WM_CLASS: (instance, class), e.g. ('celluloid', 'Celluloid')
+    normal: bool  # a normal window, not a dialog, splash screen, toolbar, ...
 
 
 def visible_area(x: int, y: int, width: int, height: int, gtk_extents: list[int] | None
