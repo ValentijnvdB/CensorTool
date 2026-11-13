@@ -5,13 +5,13 @@ import cv2
 import numpy as np
 
 from .generic import InputDevice
-from .. import x11
+from .. import windowing
 
 
 class WindowCaptureDevice(InputDevice):
     """
-    Captures one X11 window, also while other windows (the overlay) cover it. Frames are captured in the thread
-    that calls get_frame; each thread gets its own X connection.
+    Captures one window, also while other windows (the overlay) cover it. Frames are captured in the thread
+    that calls get_frame; each thread gets its own grabber (X11: its own connection).
 
     While the window is hidden (minimised, other workspace) or gone, get_frame keeps returning the last frame,
     so the live loop sees an unchanged screen.
@@ -21,18 +21,19 @@ class WindowCaptureDevice(InputDevice):
     REFRESH_INTERVAL = 0.1  # how often the window's position and size are checked
     MAX_FAILED_GRABS = 50
 
-    def __init__(self, client: int):
+    def __init__(self, client: int, window_system: windowing.WindowSystem | None = None):
         self.target = client
+        self._window_system = window_system or windowing.get()
         self._local = threading.local()
-        self._grabbers: list[x11.WindowGrabber] = []
+        self._grabbers: list[windowing.Grabber] = []
         self._grabbers_lock = threading.Lock()
         self._last: np.ndarray | None = None
 
-    def _grabber(self) -> x11.WindowGrabber:
+    def _grabber(self) -> windowing.Grabber:
         """The grabber of the calling thread."""
         grabber = getattr(self._local, 'grabber', None)
         if grabber is None:
-            grabber = x11.WindowGrabber(self.target)
+            grabber = self._window_system.grabber(self.target)
             self._local.grabber = grabber
             self._local.last_refresh = 0.0
             with self._grabbers_lock:
@@ -59,7 +60,7 @@ class WindowCaptureDevice(InputDevice):
                 return time.monotonic(), self._last
             failed += 1
             if failed >= self.MAX_FAILED_GRABS:
-                raise x11.X11Error(f"Capturing window {grabber.client:#x} keeps failing.")
+                raise windowing.WindowSystemError(f"Capturing window {grabber.window:#x} keeps failing.")
             time.sleep(0.01)
 
     def close_thread(self):

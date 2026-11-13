@@ -1,12 +1,14 @@
 """Overlay mode logic that runs without an X server: geometry, window picking and the capture device."""
 import argparse
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import main
-from app.live import x11
+from app.live import windowing
+from app.live.windowing import x11
 from app.live.input_devices import window_capture_device
 from app.live.input_devices.window_capture_device import WindowCaptureDevice
 
@@ -56,8 +58,11 @@ class TestSessionProblem:
         assert 'Wayland' in x11.session_problem()
 
     def test_other_platforms_are_refused(self, monkeypatch):
-        monkeypatch.setattr(x11.sys, 'platform', 'win32')
-        assert 'X11' in x11.session_problem()
+        monkeypatch.setattr(windowing.sys, 'platform', 'win32')
+        assert 'win32' in windowing.session_problem()
+        monkeypatch.setattr(windowing, '_system', None)
+        with pytest.raises(windowing.WindowSystemError, match='win32'):
+            windowing.get()
 
     def test_no_display(self, monkeypatch):
         monkeypatch.setattr(x11.sys, 'platform', 'linux')
@@ -68,13 +73,13 @@ class TestSessionProblem:
 
 
 class FakeGrabber:
-    """Stands in for x11.WindowGrabber. Frames are filled with the target id, so tests can tell them apart."""
+    """Stands in for a Grabber. Frames are filled with the target id, so tests can tell them apart."""
     instances: list['FakeGrabber'] = []
     visible = True
     fail = False
 
     def __init__(self, client: int):
-        self.client = client
+        self.client = self.window = client
         self.area = (0, 0, 4, 3)
         self.failures = 0
         self.closed = False
@@ -99,7 +104,7 @@ def fake_grabber(monkeypatch):
     FakeGrabber.instances = []
     FakeGrabber.visible = True
     FakeGrabber.fail = False
-    monkeypatch.setattr(x11, 'WindowGrabber', FakeGrabber)
+    monkeypatch.setattr(windowing, 'get', lambda: SimpleNamespace(grabber=FakeGrabber))
     monkeypatch.setattr(WindowCaptureDevice, 'HIDDEN_POLL_INTERVAL', 0)
     monkeypatch.setattr(window_capture_device.time, 'sleep', lambda _s: None)
     return FakeGrabber
@@ -130,7 +135,7 @@ class TestWindowCaptureDevice:
     def test_capture_that_keeps_failing_raises(self, fake_grabber):
         fake_grabber.fail = True
         device = WindowCaptureDevice(7)
-        with pytest.raises(x11.X11Error):
+        with pytest.raises(windowing.WindowSystemError):
             device.get_frame()
 
     def test_each_thread_has_its_own_grabber(self, fake_grabber):

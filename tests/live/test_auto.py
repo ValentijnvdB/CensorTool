@@ -7,7 +7,7 @@ import yaml
 from app import config
 from app.live import auto
 from app.live.auto import AutoRule
-from app.live.x11 import WindowInfo
+from app.live.windowing import WindowInfo
 
 
 class TestParseRules:
@@ -43,14 +43,14 @@ class TestAutoRule:
         assert AutoRule(None, 'secret').matches(('anything', 'Anything'), 'my SECRET file')
 
 
-@pytest.mark.parametrize('wm_class, name', [
+@pytest.mark.parametrize('app_ids, name', [
     (('io.github.celluloid_player.Celluloid', 'Io.github.celluloid_player.Celluloid'), 'celluloid'),
     (('Navigator', 'firefox'), 'firefox'),
     (('gl', 'mpv'), 'mpv'),
     ((), None),
 ])
-def test_program_name_of(wm_class, name):
-    assert auto.program_name_of(wm_class) == name
+def test_program_name_of(app_ids, name):
+    assert auto.program_name_of(app_ids) == name
 
 
 class TestAddOverlayAutoProgram:
@@ -93,15 +93,17 @@ class TestAddOverlayAutoProgram:
             assert config.load_config(path).overlay_auto_programs == ['celluloid']
 
 
-class FakeConnection:
-    """Windows as (WindowInfo, title, managed, type)."""
+class FakeDisplay:
+    """Windows as (WindowInfo, title, managed)."""
 
     def __init__(self, windows):
         self.windows = {w[0].window: w for w in windows}
 
-    def cardinals(self, win, name, n):
-        assert name == 'WM_STATE'
-        return [1] if self.windows[win][2] else None
+    def window_list(self, stacking=False):
+        return list(self.windows)
+
+    def is_app_window(self, win):
+        return self.windows[win][2]
 
     def window_info(self, win):
         return self.windows[win][0]
@@ -109,12 +111,10 @@ class FakeConnection:
     def title(self, win):
         return self.windows[win][1]
 
-    def window_type(self, win):
-        return self.windows[win][3]
 
-
-def window(win, wm_class=('celluloid', 'Celluloid'), title='', managed=True, type_='NORMAL', pid=500):
-    return WindowInfo(window=win, pid=pid, wm_class=wm_class, normal=type_ == 'NORMAL'), title, managed, type_
+def window(win, app_ids=('celluloid', 'Celluloid'), title='', managed=True, type_='NORMAL', pid=500):
+    info = WindowInfo(window=win, pid=pid, app_ids=app_ids, normal=type_ == 'NORMAL', panel=type_ == 'DOCK')
+    return info, title, managed
 
 
 class TestAutoWatcherCheck:
@@ -122,10 +122,10 @@ class TestAutoWatcherCheck:
     def check(self, windows, rules):
         found = []
         watcher = auto.AutoWatcher(lambda: rules, found.append)
-        conn = FakeConnection(windows)
-        for win in conn.windows:
-            watcher._check(conn, win, rules)
-        return found, watcher, conn
+        display = FakeDisplay(windows)
+        for win in display.windows:
+            watcher._check(display, win, rules)
+        return found, watcher, display
 
     def test_matching_windows_are_reported(self):
         found, _, _ = self.check([window(1), window(2, ('Navigator', 'firefox')), window(3, type_='DIALOG')],
@@ -133,8 +133,8 @@ class TestAutoWatcherCheck:
         assert found == [1, 3]
 
     def test_each_window_once(self):
-        found, watcher, conn = self.check([window(1)], [AutoRule('celluloid')])
-        watcher._check(conn, 1, [AutoRule('celluloid')])
+        found, watcher, display = self.check([window(1)], [AutoRule('celluloid')])
+        watcher._check(display, 1, [AutoRule('celluloid')])
         assert found == [1]
 
     def test_unmanaged_panels_and_own_windows_are_skipped(self):
@@ -150,3 +150,12 @@ class TestAutoWatcherCheck:
 
     def test_no_rules(self):
         assert self.check([window(1)], [])[0] == []
+
+    def test_closed_windows_are_reported_gone_and_can_match_again(self):
+        gone = []
+        found = []
+        watcher = auto.AutoWatcher(lambda: [AutoRule('celluloid')], found.append, gone.append)
+        rules = [AutoRule('celluloid')]
+        watcher._check_all(FakeDisplay([window(1), window(2)]), rules)
+        watcher._check_all(FakeDisplay([window(2)]), rules)
+        assert found == [1, 2] and gone == [1]

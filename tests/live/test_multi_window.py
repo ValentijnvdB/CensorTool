@@ -10,7 +10,7 @@ from app.config import CONFIG
 from app.live import launch, quick
 from app.live.input_devices.generic import InputDevice
 from app.live.output_devices.generic import OutputDevice
-from app.live.x11 import WindowInfo
+from app.live.windowing import WindowInfo
 
 
 class TestTurnScheduler:
@@ -199,12 +199,12 @@ class TestLoopWithSeveralSources:
         assert {s for s, _ in output.frames} == {quick.SingleSource.KEY}
 
 
-class FakeConnection:
+class FakeDisplay:
 
     def __init__(self, infos):
         self.infos = {i.window: i for i in infos}
 
-    def client_list(self, name='_NET_CLIENT_LIST'):
+    def window_list(self, stacking=False):
         return list(self.infos)
 
     def window_info(self, win):
@@ -221,10 +221,10 @@ class TestProgramWindowWatcher:
 
     def check(self, watcher, infos, monkeypatch, parents=None):
         monkeypatch.setattr(launch, 'parent_map', lambda: parents or {100: 1, 101: 100})
-        watcher._check(FakeConnection(infos), {100}, {}, time.monotonic())
+        watcher._check(FakeDisplay(infos), {100}, {}, time.monotonic())
 
-    def info(self, window, pid=None, wm_class=()):
-        return WindowInfo(window=window, pid=pid, wm_class=wm_class, normal=True)
+    def info(self, window, pid=None, app_ids=()):
+        return WindowInfo(window=window, pid=pid, app_ids=app_ids, normal=True)
 
     def test_new_window_of_the_process_tree(self, monkeypatch):
         watcher, found = self.watcher(known={5})

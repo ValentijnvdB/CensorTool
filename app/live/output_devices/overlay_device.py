@@ -2,10 +2,10 @@
 Shows the censored frames of each censored (target) window in an overlay that lies exactly over it.
 
 The overlay ignores mouse and keyboard input, so clicks and scrolling go to the target window below it. It is a
-transient of its target, so the window manager keeps it directly above the target: other windows (also other
-censored windows with their overlays), menus and panels still appear on top of it.
+kept directly above its target (WindowSystem.place_above; X11: as a transient of the target): other windows (also
+other censored windows with their overlays), menus and panels still appear on top of it.
 
-Needs PySide6 and an X11 session. Create it in the Qt (main) thread; push_frame and poll_command can be called
+Needs PySide6 and a supported window system (see app/live/windowing). Create it in the Qt (main) thread; push_frame and poll_command can be called
 from any thread. Frames are pushed with the target's window id as source.
 """
 import threading
@@ -15,11 +15,11 @@ from typing import Callable
 import numpy as np
 from loguru import logger
 from PySide6.QtCore import QObject, QRect, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QWindow
+from PySide6.QtGui import QColor, QFont, QImage, QPainter
 from PySide6.QtWidgets import QWidget
 
 from .generic import Command, OutputDevice
-from .. import x11
+from .. import windowing
 
 
 class OverlayWindow(QWidget):
@@ -76,18 +76,16 @@ class _Bridge(QObject):
 class _Target:
     """The overlay of one censored window."""
 
-    def __init__(self, client: int, since: float, on_change: Callable[[], None]):
+    def __init__(self, window_system: windowing.WindowSystem, client: int, since: float,
+                 on_change: Callable[[], None]):
         self.client = client
         self.accept_since = since  # frames captured before this belong to an earlier time this window was censored
         self.newest: np.ndarray | None = None  # pushed, not painted yet
         self.window = OverlayWindow()
-        self.window.winId()  # create the native window, so it can be made a transient before it is shown
-        self.parent_qwindow = QWindow.fromWinId(client)
-        self.window.windowHandle().setTransientParent(self.parent_qwindow)
+        self.window.winId()  # create the native window, so it can be placed before it is shown
+        self.placement = window_system.place_above(self.window.windowHandle(), client)
         self.applied_version = -1
-        self.tracker = x11.TargetTracker(client, on_change=on_change)
-        self.tracker.start()
-        self.tracker.wait_ready()
+        self.tracker = window_system.tracker(client, on_change=on_change)
 
     def close(self):
         self.tracker.stop()
@@ -96,11 +94,13 @@ class _Target:
 
 class OverlayDevice(OutputDevice):
 
-    def __init__(self, on_target_closed: Callable[[int], None] | None = None):
+    def __init__(self, on_target_closed: Callable[[int], None] | None = None,
+                 window_system: windowing.WindowSystem | None = None):
         """
         :param on_target_closed: called in the Qt thread with the window id when a censored window no longer
             exists. Its overlay is removed already.
         """
+        self._window_system = window_system or windowing.get()
         self._on_target_closed = on_target_closed
         self._bridge = _Bridge(self._show_newest_frame, self._follow_target)
         self._lock = threading.Lock()  # guards _targets' frames and the dict itself
@@ -145,7 +145,7 @@ class OverlayDevice(OutputDevice):
         """
         if client in self._targets:
             return
-        target = _Target(client, since if since is not None else float('-inf'),
+        target = _Target(self._window_system, client, since if since is not None else float('-inf'),
                          on_change=lambda: self._bridge.target_changed.emit(client))
         target.window.placeholder_text = placeholder or OverlayWindow.CENSORING_TEXT
         with self._lock:

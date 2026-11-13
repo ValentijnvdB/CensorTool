@@ -3,7 +3,8 @@ Overlay mode: censor windows in place.
 
 Each censored (target) window is captured (also while covered), censored by the live loop and shown in an overlay
 exactly over it. The overlays ignore input, so the windows can be used as usual. A tray icon can add windows, stop
-censoring one, reload the configs and quit. Linux with X11 only; needs PySide6 (requirements-overlay.txt).
+censoring one, reload the configs and quit. Needs PySide6 (requirements-overlay.txt) and a supported window
+system (app/live/windowing: Linux with X11 so far).
 
 The first windows are clicked, given by id, or the window of a program that is started for it (see launch.py);
 windows that program opens later are added automatically. While such a program starts, an optional curtain
@@ -29,12 +30,13 @@ import subprocess
 import threading
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
 
-from . import x11
+from . import windowing
 from .quick import Sources
 
 QT_MISSING = "Overlay mode needs PySide6. Install it with: pip install -r requirements-overlay.txt"
@@ -47,9 +49,10 @@ def _prepare_qt_environment():
     """
     Settings that must be made before the QApplication is created.
 
-    - Qt works in X pixels (no high-DPI scaling): the overlay must cover the target exactly, and fractional scale
-      factors would leave a 1 px gap of uncensored window.
+    - Qt works in screen pixels (no high-DPI scaling): the overlay must cover the target exactly, and fractional
+      scale factors would leave a 1 px gap of uncensored window.
     - opencv-python points QT_QPA_PLATFORM_PLUGIN_PATH to its own Qt 5 plugins, which PySide6 (Qt 6) can't use.
+    - What the window system needs (X11: the xcb platform plugin).
 
     A started program gets the environment from before these changes (a Qt program would be affected by them).
     """
@@ -57,7 +60,7 @@ def _prepare_qt_environment():
     if _original_environment is None:
         _original_environment = dict(os.environ)
     os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '0'
-    os.environ['QT_QPA_PLATFORM'] = 'xcb'
+    windowing.get().prepare_qt_environment(os.environ)
     for name in ('QT_SCALE_FACTOR', 'QT_SCREEN_SCALE_FACTORS', 'QT_AUTO_SCREEN_SCALE_FACTOR'):
         os.environ.pop(name, None)
     for name in ('QT_QPA_PLATFORM_PLUGIN_PATH', 'QT_QPA_FONTDIR'):
@@ -65,16 +68,20 @@ def _prepare_qt_environment():
             os.environ.pop(name)
 
 
+@contextmanager
+def _display():
+    """A Display for the calling thread, closed afterwards."""
+    display = windowing.get().open_display()
+    try:
+        yield display
+    finally:
+        display.close()
+
+
 def _resolve_target(window_id: int) -> int:
     """The application window for a window id (a WM frame id is turned into the window inside it)."""
-    conn = x11.Connection()
-    try:
-        if conn.attributes(window_id) is None:
-            raise ValueError(f"There is no window with id {window_id:#x}.")
-        client = conn.client_of(conn.toplevel(window_id))
-        return window_id if client is None or window_id == client else client
-    finally:
-        conn.close()
+    with _display() as display:
+        return display.application_window(window_id)
 
 
 # seconds a started program gets to open its window
@@ -94,7 +101,7 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
     :param auto: start in auto mode, with these programs in addition to overlay_auto_programs in config.yml.
         None: auto mode is off (it can be switched on from the tray).
     """
-    problem = x11.session_problem()
+    problem = windowing.session_problem()
     if problem:
         raise RuntimeError(problem)
     try:
@@ -125,7 +132,7 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
             targets = []  # auto mode finds the windows
         else:
             print("Click the window to censor (right click or Escape cancels).")
-            window_id = x11.pick_window()
+            window_id = windowing.get().pick_window()
             if window_id is None:
                 logger.info("No window selected.")
                 targets = []  # keeps running in the tray (it stops right away when there is no tray)
@@ -171,16 +178,16 @@ def _launch(command: list[str], qt, cover_existing: bool = True) -> StartedProgr
     from ..config import CONFIG
     from . import launch
 
-    conn = x11.Connection()
+    monitor = windowing.get().monitor()  # made before the program starts, so it sees its windows being created
     covers = None
     try:
-        before = conn.client_list()
+        before = monitor.display.window_list()
         if cover_existing:
-            covers = _cover_windows_of(conn, before, command)
+            covers = _cover_windows_of(monitor.display, before, command)
         proc = launch.start_program(command, show_output=CONFIG.debug, env=_original_environment)
         logger.info(f"Started {command[0]} (pid {proc.pid}), waiting for its window...")
         try:
-            target, how = launch.find_program_window(conn, proc, command, set(before), timeout=LAUNCH_TIMEOUT,
+            target, how = launch.find_program_window(monitor, proc, command, set(before), timeout=LAUNCH_TIMEOUT,
                                                      tick=qt.processEvents)
         except launch.LaunchError as e:
             raise RuntimeError(str(e)) from None
@@ -189,7 +196,7 @@ def _launch(command: list[str], qt, cover_existing: bool = True) -> StartedProgr
             covers.close()
         raise
     finally:
-        conn.close()
+        monitor.close()
     launch.describe_match(how, command)
     if how != 'class-existing' and covers is not None:
         covers.close()
@@ -197,19 +204,19 @@ def _launch(command: list[str], qt, cover_existing: bool = True) -> StartedProgr
     return StartedProgram(command, proc, target, how, set(before), covers)
 
 
-def _cover_windows_of(conn: x11.Connection, windows: list[int], command: list[str]) -> Curtain | None:
-    """Cover the visible normal windows that belong to the program of command (by WM_CLASS)."""
+def _cover_windows_of(display: windowing.Display, windows: list[int], command: list[str]) -> Curtain | None:
+    """Cover the visible normal windows that belong to the program of command (by window class)."""
     from . import launch
 
     names = launch.program_names(command)
     areas = []
     for win in windows:
-        info = conn.window_info(win)
-        if not info.normal or not launch.class_matches(names, info.wm_class):
+        info = display.window_info(win)
+        if not info.normal or not launch.class_matches(names, info.app_ids):
             continue
-        attrs = conn.attributes(win)
-        if attrs is not None and attrs.map_state == x11.IS_VIEWABLE:
-            areas.append(conn.visible_client_area(win, attrs)[0])
+        area = display.visible_area(win)
+        if area is not None:
+            areas.append(area)
     if not areas:
         return None
     logger.debug(f"Covering {len(areas)} open window(s) of {command[0]} while it starts.")
@@ -267,8 +274,7 @@ class WindowSources(Sources):
         self._lock = threading.Lock()
         self._devices: dict[int, object] = {}
         self._removed: list = []  # devices the live loop may still use; closed at the end
-        self.focus = x11.ActiveWindowTracker()
-        self.focus.start()
+        self.focus = windowing.get().focus_tracker()
 
     def add(self, client: int):
         with self._lock:
@@ -324,7 +330,7 @@ class OverlayApp:
 
         self.qt = QApplication.instance() or QApplication(['CensorTool'])
         self.qt.setQuitOnLastWindowClosed(False)
-        x11.install_error_handler()  # in case Qt replaced it
+        windowing.get().qt_started()
         for screen in self.qt.screens():
             if screen.devicePixelRatio() != 1:
                 logger.warning(f"Screen {screen.name()} has a device pixel ratio of {screen.devicePixelRatio()}; "
@@ -470,17 +476,14 @@ class OverlayApp:
     @staticmethod
     def _labels(windows: list[int]) -> dict[int, str]:
         """Menu labels of windows: their title and id."""
-        conn = x11.Connection()
-        try:
+        with _display() as display:
             labels = {}
             for win in windows:
-                title = conn.title(win) or 'untitled'
+                title = display.title(win) or 'untitled'
                 if len(title) > 60:
                     title = title[:57] + '...'
                 labels[win] = f"{title} ({win:#x})"
             return labels
-        finally:
-            conn.close()
 
     @staticmethod
     def _add_empty_entry(menu):
@@ -635,11 +638,8 @@ class OverlayApp:
     def auto_matched(self, client: int):
         if not self.auto_enabled or client in self.released or client in self.overlay.targets:
             return
-        conn = x11.Connection()
-        try:
-            title = conn.title(client)
-        finally:
-            conn.close()
+        with _display() as display:
+            title = display.title(client)
         logger.info(f"Auto mode: window {client:#x} ({title or 'untitled'}).")
         self.add_window(client, found=True)
 
@@ -647,13 +647,10 @@ class OverlayApp:
         from ..config import add_overlay_auto_program
         from .auto import AutoRule, program_name_of
 
-        conn = x11.Connection()
-        try:
-            name = program_name_of(conn.window_info(client).wm_class)
-        finally:
-            conn.close()
+        with _display() as display:
+            name = program_name_of(display.window_info(client).app_ids)
         if name is None:
-            logger.warning(f"Window {client:#x} doesn't say which program it belongs to (no WM_CLASS).")
+            logger.warning(f"Window {client:#x} doesn't say which program it belongs to (no window class).")
             return
         rule = AutoRule(program=name)
         if rule not in self.auto_session_rules:
@@ -683,7 +680,8 @@ class OverlayApp:
 
         def pick():
             try:
-                client = x11.pick_window(exclude=self.overlay.overlay_window_ids(), cancel=self.stop_event)
+                client = windowing.get().pick_window(exclude=self.overlay.overlay_window_ids(),
+                                                     cancel=self.stop_event)
                 if client is not None:
                     signal.emit(client)
                 else:

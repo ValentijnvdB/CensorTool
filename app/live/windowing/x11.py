@@ -1,9 +1,11 @@
 """
-Minimal ctypes bindings to Xlib, XComposite and XShm for overlay mode (X11 only).
+The window system for Linux with X11 (see base.py), with minimal ctypes bindings to Xlib, XComposite and XShm.
 
 - WindowGrabber: captures one window, also while other windows (such as the overlay) cover it.
 - TargetTracker: follows the position, size and visibility of a window using X events.
+- X11Monitor: notices new windows and changed titles.
 - pick_window: lets the user click a window.
+- Overlays are kept above their window by making them its transient (WM_TRANSIENT_FOR).
 
 The X libraries are loaded on first use, so importing this module works on any platform.
 Every thread that talks to the X server opens its own connection (Display).
@@ -17,10 +19,12 @@ import select
 import sys
 import threading
 import time
-from dataclasses import dataclass
 
 import numpy as np
 from loguru import logger
+
+from .base import (Area, Display, FocusTracker, Grabber, TargetState, Tracker, WindowChanges, WindowInfo,
+                   WindowMonitor, WindowSystem, WindowSystemError)
 
 Window = Drawable = Pixmap = Atom = Cursor = Time = ctypes.c_ulong
 
@@ -104,7 +108,7 @@ class XEvent(ctypes.Union):
                 ('create', XCreateWindowEvent), ('property', XPropertyEvent), ('pad', ctypes.c_long * 24)]
 
 
-class X11Error(RuntimeError):
+class X11Error(WindowSystemError):
     pass
 
 
@@ -324,15 +328,16 @@ class Connection:
         self.x.XFree(prop)
         return windows
 
-    def window_info(self, win: int) -> 'WindowInfo':
+    def window_info(self, win: int) -> WindowInfo:
         """The properties used to tell which program a window belongs to."""
         pid = self.cardinals(win, '_NET_WM_PID', 1)
-        types = self.cardinals(win, '_NET_WM_WINDOW_TYPE', 1)
+        window_type = self.window_type(win)
         return WindowInfo(
             window=win,
             pid=pid[0] if pid else None,
-            wm_class=tuple(self.strings(win, 'WM_CLASS') or ()),
-            normal=not types or types[0] == self.atom('_NET_WM_WINDOW_TYPE_NORMAL'),
+            app_ids=tuple(self.strings(win, 'WM_CLASS') or ()),  # (instance, class), e.g. ('celluloid', 'Celluloid')
+            normal=window_type in (None, 'NORMAL'),
+            panel=window_type in ('DOCK', 'DESKTOP'),
         )
 
     def title(self, win: int) -> str:
@@ -377,14 +382,6 @@ class Connection:
         return visible_area(x, y, attrs.width, attrs.height, self.cardinals(client, '_GTK_FRAME_EXTENTS', 4))
 
 
-@dataclass(frozen=True)
-class WindowInfo:
-    window: int
-    pid: int | None  # _NET_WM_PID: the process that made the window (not reliable for Flatpak/Snap apps)
-    wm_class: tuple[str, ...]  # WM_CLASS: (instance, class), e.g. ('celluloid', 'Celluloid')
-    normal: bool  # a normal window, not a dialog, splash screen, toolbar, ...
-
-
 def visible_area(x: int, y: int, width: int, height: int, gtk_extents: list[int] | None
                  ) -> tuple[tuple[int, int, int, int], tuple[int, int]]:
     """Remove the shadow margins (left, right, top, bottom) from a window area. See visible_client_area."""
@@ -399,7 +396,7 @@ def visible_area(x: int, y: int, width: int, height: int, gtk_extents: list[int]
 
 # ------------------------------------------------------------------ capture
 
-class WindowGrabber:
+class WindowGrabber(Grabber):
     """
     Captures the visible area of one window (see Connection.visible_client_area), also when it is covered.
 
@@ -411,7 +408,7 @@ class WindowGrabber:
 
     def __init__(self, client: int, method: str = 'pixmap'):
         self.conn = Connection()
-        self.client = client
+        self.client = self.window = client
         major, minor = ctypes.c_int(), ctypes.c_int()
         has_composite = bool(self.conn.xcomp.XCompositeQueryExtension(self.conn.dpy, ctypes.byref(major),
                                                                       ctypes.byref(minor)))
@@ -552,22 +549,14 @@ class WindowGrabber:
 
 # ------------------------------------------------------------------ following a window
 
-@dataclass(frozen=True)
-class TargetState:
-    version: int = 0
-    alive: bool = True  # the window exists
-    visible: bool = False  # shown: not minimised and on the current workspace
-    area: tuple[int, int, int, int] = (0, 0, 0, 0)  # visible area on the root window (see visible_client_area)
-
-
-class TargetTracker(threading.Thread):
+class TargetTracker(threading.Thread, Tracker):
     """
     Follows the visible area of a window using X events, for placing the overlay. Read .state from any thread.
     """
 
     def __init__(self, client: int, on_change=None):
         super().__init__(name=f'x11-tracker-{client:#x}', daemon=True)
-        self.client = client
+        self.client = self.window = client
         self.state = TargetState()
         self._on_change = on_change
         self._stop_event = threading.Event()
@@ -624,7 +613,7 @@ class TargetTracker(threading.Thread):
                 self._on_change()
 
 
-class ActiveWindowTracker(threading.Thread):
+class ActiveWindowTracker(threading.Thread, FocusTracker):
     """Follows which window has the focus. Read .active from any thread."""
 
     def __init__(self):
@@ -746,3 +735,136 @@ def pick_window(exclude: set[int] = frozenset(), cancel: threading.Event | None 
     finally:
         x.XFreeCursor(conn.dpy, cursor)
         conn.close()
+
+
+# ------------------------------------------------------------------ the window system
+
+class X11Display(Display):
+
+    def __init__(self, conn: Connection | None = None):
+        self.conn = conn or Connection()
+
+    def close(self):
+        self.conn.close()
+
+    def window_list(self, stacking: bool = False) -> list[int]:
+        if stacking:
+            return self.conn.client_list('_NET_CLIENT_LIST_STACKING') or self.conn.client_list()
+        return self.conn.client_list()
+
+    def window_info(self, win: int) -> WindowInfo:
+        return self.conn.window_info(win)
+
+    def title(self, win: int) -> str:
+        return self.conn.title(win)
+
+    def is_app_window(self, win: int) -> bool:
+        return self.conn.cardinals(win, 'WM_STATE', 1) is not None
+
+    def visible_area(self, win: int) -> Area | None:
+        attrs = self.conn.attributes(win)
+        if attrs is None or attrs.map_state != IS_VIEWABLE:
+            return None
+        return self.conn.visible_client_area(win, attrs)[0]
+
+    def application_window(self, win: int) -> int:
+        if self.conn.attributes(win) is None:
+            raise ValueError(f"There is no window with id {win:#x}.")
+        client = self.conn.client_of(self.conn.toplevel(win))
+        return win if client is None or win == client else client
+
+
+class X11Monitor(WindowMonitor):
+    """
+    Watches the root window for changes to the window list (_NET_CLIENT_LIST) and for new windows. New windows are
+    followed from their creation, so they are reported as soon as the window manager manages them (WM_STATE),
+    which is about when they are shown; also when WM_CLASS is set or (with follow_titles) their title changes.
+    """
+
+    def __init__(self, follow_titles: bool = False):
+        self.conn = Connection()
+        self.display = X11Display(self.conn)
+        self._follow_titles = follow_titles
+        self._followed: set[int] = set()
+        c = self.conn
+        c.x.XSelectInput(c.dpy, c.root, SUBSTRUCTURE_NOTIFY_MASK | PROPERTY_CHANGE_MASK)
+        names = ['WM_STATE', 'WM_CLASS'] + (['_NET_WM_NAME', 'WM_NAME'] if follow_titles else [])
+        self._atoms = {c.atom(n) for n in names}
+        self._client_list = c.atom('_NET_CLIENT_LIST')
+        self._event = XEvent()
+        if follow_titles:
+            for win in c.client_list():
+                self._follow(win)
+        c.x.XFlush(c.dpy)
+
+    def close(self):
+        self.conn.close()
+
+    def _follow(self, win: int):
+        if win not in self._followed:
+            self._followed.add(win)
+            self.conn.x.XSelectInput(self.conn.dpy, win, PROPERTY_CHANGE_MASK)
+
+    def wait(self, timeout: float) -> WindowChanges:
+        c, x, event = self.conn, self.conn.x, self._event
+        if not x.XPending(c.dpy):
+            select.select([x.XConnectionNumber(c.dpy)], [], [], timeout)
+        changes = WindowChanges()
+        while x.XPending(c.dpy):
+            x.XNextEvent(c.dpy, ctypes.byref(event))
+            if event.type == CREATE_NOTIFY and event.create.parent == c.root and not event.create.override_redirect:
+                self._follow(event.create.window)  # to see WM_STATE being set: when it is managed
+            elif event.type == PROPERTY_NOTIFY:
+                if event.property.window == c.root:
+                    changes.list_changed = changes.list_changed or event.property.atom == self._client_list
+                elif event.property.atom in self._atoms:
+                    changes.windows.add(event.property.window)
+        if changes.list_changed:
+            clients = set(c.client_list())
+            if self._follow_titles:
+                for win in clients:
+                    self._follow(win)
+            # forget windows that are gone; windows that were created but are not managed yet are kept
+            self._followed = {w for w in self._followed if w in clients or c.attributes(w) is not None}
+        c.x.XFlush(c.dpy)
+        return changes
+
+
+class X11WindowSystem(WindowSystem):
+    name = 'x11'
+
+    def prepare_qt_environment(self, environ: dict[str, str]):
+        environ['QT_QPA_PLATFORM'] = 'xcb'
+
+    def qt_started(self):
+        install_error_handler()  # in case Qt replaced it
+
+    def open_display(self) -> X11Display:
+        return X11Display()
+
+    def monitor(self, follow_titles: bool = False) -> X11Monitor:
+        return X11Monitor(follow_titles)
+
+    def grabber(self, win: int) -> WindowGrabber:
+        return WindowGrabber(win)
+
+    def tracker(self, win: int, on_change=None) -> TargetTracker:
+        tracker = TargetTracker(win, on_change=on_change)
+        tracker.start()
+        tracker.wait_ready()
+        return tracker
+
+    def focus_tracker(self) -> ActiveWindowTracker:
+        tracker = ActiveWindowTracker()
+        tracker.start()
+        return tracker
+
+    def pick_window(self, exclude: set[int] = frozenset(), cancel: threading.Event | None = None) -> int | None:
+        return pick_window(exclude, cancel)
+
+    def place_above(self, overlay, win: int) -> object:
+        # a transient: the window manager keeps it just above its parent (WM_TRANSIENT_FOR)
+        from PySide6.QtGui import QWindow
+        parent = QWindow.fromWinId(win)
+        overlay.setTransientParent(parent)
+        return parent
