@@ -131,11 +131,11 @@ def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_heig
     start_live_censor(device_id, use_vcam, vcam_width, vcam_height, vcam_fps, censor_config)
 
 
-def start_overlay_censor(window_id: int | None, censor_config: Path | str, command: list[str] | None,
+def start_overlay_censor(window_ids: list[int] | None, censor_config: Path | str, command: list[str] | None,
                          curtain: bool):
     from app.live.overlay import start_overlay_censor
     try:
-        start_overlay_censor(window_id, censor_config, command=command, curtain=curtain)
+        start_overlay_censor(window_ids, censor_config, command=command, curtain=curtain)
     except (RuntimeError, ValueError) as e:
         logger.error(str(e))
         sys.exit(1)
@@ -219,9 +219,9 @@ def main():
 
     # overlay mode
     overlay_parser = parser.add_argument_group(title='Overlay arguments')
-    overlay_parser.add_argument('--window', default=None, type=window_id_arg,
-                                help='X11 id of the window to censor (e.g. from xwininfo or wmctrl -l). '
-                                     'If not given, you click the window.')
+    overlay_parser.add_argument('--window', default=None, type=window_id_arg, action='append',
+                                help='X11 id of a window to censor (e.g. from xwininfo or wmctrl -l); repeat it '
+                                     'for more windows. If not given, you click the window.')
     overlay_parser.add_argument('--curtain', action='store_true',
                                 help='With a command after --: cover the screens while the program starts, so its '
                                      'window is never visible uncensored.')
@@ -319,7 +319,7 @@ def main():
         )
 
     elif args.mode in ['overlay']:
-        start_overlay_censor(window_id=args.window, censor_config=args.censor_config, command=command,
+        start_overlay_censor(window_ids=args.window, censor_config=args.censor_config, command=command,
                              curtain=args.curtain)
 
     elif args.mode in ['f', 'file', 'files']:

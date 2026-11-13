@@ -1,12 +1,12 @@
 """
-Shows the censored frames in a window that lies exactly over the censored (target) window.
+Shows the censored frames of each censored (target) window in an overlay that lies exactly over it.
 
 The overlay ignores mouse and keyboard input, so clicks and scrolling go to the target window below it. It is a
-transient of the target, so the window manager keeps it directly above the target: other windows, menus and
-panels still appear on top of it.
+transient of its target, so the window manager keeps it directly above the target: other windows (also other
+censored windows with their overlays), menus and panels still appear on top of it.
 
 Needs PySide6 and an X11 session. Create it in the Qt (main) thread; push_frame and poll_command can be called
-from any thread.
+from any thread. Frames are pushed with the target's window id as source.
 """
 import threading
 from collections import deque
@@ -51,56 +51,75 @@ class OverlayWindow(QWidget):
 
 class _Bridge(QObject):
     """Runs callbacks in the Qt thread when its signals are emitted from other threads."""
-    frame_ready = Signal()
-    target_changed = Signal()
+    frame_ready = Signal(object)  # client (object: X ids don't fit a signed 32-bit int)
+    target_changed = Signal(object)
 
-    def __init__(self, on_frame_ready: Callable[[], None], on_target_changed: Callable[[], None]):
+    def __init__(self, on_frame_ready: Callable[[int], None], on_target_changed: Callable[[int], None]):
         super().__init__()
         self._on_frame_ready = on_frame_ready
         self._on_target_changed = on_target_changed
         self.frame_ready.connect(self._frame_ready, Qt.QueuedConnection)
         self.target_changed.connect(self._target_changed, Qt.QueuedConnection)
 
-    @Slot()
-    def _frame_ready(self):
-        self._on_frame_ready()
+    @Slot(object)
+    def _frame_ready(self, client):
+        self._on_frame_ready(client)
 
-    @Slot()
-    def _target_changed(self):
-        self._on_target_changed()
+    @Slot(object)
+    def _target_changed(self, client):
+        self._on_target_changed(client)
+
+
+class _Target:
+    """The overlay of one censored window."""
+
+    def __init__(self, client: int, since: float, on_change: Callable[[], None]):
+        self.client = client
+        self.accept_since = since  # frames captured before this belong to an earlier time this window was censored
+        self.newest: np.ndarray | None = None  # pushed, not painted yet
+        self.window = OverlayWindow()
+        self.window.winId()  # create the native window, so it can be made a transient before it is shown
+        self.parent_qwindow = QWindow.fromWinId(client)
+        self.window.windowHandle().setTransientParent(self.parent_qwindow)
+        self.applied_version = -1
+        self.tracker = x11.TargetTracker(client, on_change=on_change)
+        self.tracker.start()
+        self.tracker.wait_ready()
+
+    def close(self):
+        self.tracker.stop()
+        self.window.hide()
 
 
 class OverlayDevice(OutputDevice):
 
-    def __init__(self, client: int, on_target_closed: Callable[[], None] | None = None):
+    def __init__(self, on_target_closed: Callable[[int], None] | None = None):
         """
-        :param client: the window to cover.
-        :param on_target_closed: called in the Qt thread when the window no longer exists.
+        :param on_target_closed: called in the Qt thread with the window id when a censored window no longer
+            exists. Its overlay is removed already.
         """
-        self.window = OverlayWindow()
-        self.window.winId()  # create the native window, so it can be made a transient before it is shown
         self._on_target_closed = on_target_closed
         self._bridge = _Bridge(self._show_newest_frame, self._follow_target)
-
-        self._lock = threading.Lock()
-        self._newest: np.ndarray | None = None
-        self._accept_since = float('-inf')  # frames captured before this belong to a previous target
+        self._lock = threading.Lock()  # guards _targets' frames and the dict itself
+        self._targets: dict[int, _Target] = {}
         self._commands: deque[Command] = deque()
+        self._closed = False
 
-        self.client = 0
-        self._tracker: x11.TargetTracker | None = None
-        self._parent_qwindow: QWindow | None = None
-        self._applied_version = -1
-        self.set_target(client)
+    @property
+    def targets(self) -> list[int]:
+        """The censored windows, in the order they were added."""
+        with self._lock:
+            return list(self._targets)
 
     # ---------------------------------------------------------------- any thread
 
-    def push_frame(self, frame: np.ndarray, timestamp: float | None = None):
+    def push_frame(self, frame: np.ndarray, timestamp: float | None = None, source=None):
         with self._lock:
-            if timestamp is not None and timestamp < self._accept_since:
+            target = self._targets.get(source)
+            if target is None or self._closed or (timestamp is not None and timestamp < target.accept_since):
                 return
-            self._newest = np.ascontiguousarray(frame)
-        self._bridge.frame_ready.emit()
+            target.newest = np.ascontiguousarray(frame)
+        self._bridge.frame_ready.emit(source)
 
     def add_command(self, command: Command):
         self._commands.append(command)
@@ -113,67 +132,69 @@ class OverlayDevice(OutputDevice):
 
     # ---------------------------------------------------------------- Qt thread
 
-    def set_target(self, client: int, since: float | None = None):
+    def add_target(self, client: int, since: float | None = None):
         """
-        Cover another window. Until a frame captured at or after since (time.monotonic()) arrives, a placeholder
-        is shown instead of frames of the previous window.
+        Cover a window. A placeholder is shown until a frame captured at or after since (time.monotonic()) arrives,
+        so frames of an earlier time this window was censored are not shown.
         """
-        if self._tracker is not None:
-            self._tracker.stop()
+        if client in self._targets:
+            return
+        target = _Target(client, since if since is not None else float('-inf'),
+                         on_change=lambda: self._bridge.target_changed.emit(client))
         with self._lock:
-            self._newest = None
-            self._accept_since = since if since is not None else float('-inf')
-        self.window.frame = None
-        self.window.hide()  # the window manager reads the transient parent when the window is shown
-        self.client = client
-        self._parent_qwindow = QWindow.fromWinId(client)
-        self.window.windowHandle().setTransientParent(self._parent_qwindow)
+            self._targets[client] = target
+        self._follow_target(client)
 
-        self._applied_version = -1
-        self._tracker = x11.TargetTracker(client, on_change=self._bridge.target_changed.emit)
-        self._tracker.start()
-        self._tracker.wait_ready()
-        self._follow_target()
+    def remove_target(self, client: int):
+        with self._lock:
+            target = self._targets.pop(client, None)
+        if target is not None:
+            target.close()
 
     def overlay_window_ids(self) -> set[int]:
-        return {int(self.window.winId())}
+        return {int(t.window.winId()) for t in self._targets.values()}
 
-    def _show_newest_frame(self):
+    def any_visible(self) -> bool:
+        return any(t.window.isVisible() for t in self._targets.values())
+
+    def _show_newest_frame(self, client: int):
         with self._lock:
-            frame, self._newest = self._newest, None
+            target = self._targets.get(client)
+            if target is None:
+                return
+            frame, target.newest = target.newest, None
         if frame is not None:
-            self.window.frame = frame
-            self.window.update()
+            target.window.frame = frame
+            target.window.update()
 
-    def _follow_target(self):
-        tracker = self._tracker
-        if tracker is None:
+    def _follow_target(self, client: int):
+        target = self._targets.get(client)
+        if target is None:
             return
-        state = tracker.state
-        if state.version == self._applied_version:
+        state = target.tracker.state
+        if state.version == target.applied_version:
             return
-        self._applied_version = state.version
+        target.applied_version = state.version
+        window = target.window
         if not state.alive:
-            self.window.hide()
-            logger.info(f"The censored window {tracker.client:#x} was closed.")
+            logger.info(f"The censored window {client:#x} was closed.")
+            self.remove_target(client)
             if self._on_target_closed is not None:
-                self._on_target_closed()
+                self._on_target_closed(client)
             return
         if not state.visible or state.area[2] <= 0 or state.area[3] <= 0:
-            self.window.hide()
+            window.hide()
             return
         rect = QRect(*state.area)
-        if self.window.geometry() != rect:
-            self.window.setGeometry(rect)
-        if not self.window.isVisible():
-            self.window.show()
-            self.window.setGeometry(rect)  # the window manager may have placed it elsewhere when mapping it
+        if window.geometry() != rect:
+            window.setGeometry(rect)
+        if not window.isVisible():
+            window.show()
+            window.setGeometry(rect)  # the window manager may have placed it elsewhere when mapping it
 
     def close(self):
-        if self._tracker is not None:
-            self._tracker.stop()
-            self._tracker = None
         with self._lock:
-            self._accept_since = float('inf')  # ignore frames that are still on their way
-            self._newest = None
-        self.window.hide()
+            self._closed = True  # ignore frames that are still on their way
+            targets, self._targets = list(self._targets.values()), {}
+        for target in targets:
+            target.close()

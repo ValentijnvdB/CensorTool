@@ -44,6 +44,10 @@ live_input_size: 0
 ### cost of one frame of extra latency. 1 gives the lowest latency.
 live_frames_in_flight: 2
 
+### Overlay mode: how many windows are censored at the same time. They share
+### the censoring, so each gets fewer fps; a faster PC handles more. 0 = no limit.
+live_max_windows: 4
+
 # Config for the 'ai_remove' censor style.
 # Comfy base url
 comfy_host: "localhost"

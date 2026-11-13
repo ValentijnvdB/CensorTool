@@ -319,6 +319,19 @@ class Connection:
             normal=not types or types[0] == self.atom('_NET_WM_WINDOW_TYPE_NORMAL'),
         )
 
+    def title(self, win: int) -> str:
+        """The window's title (_NET_WM_NAME, else WM_NAME), '' if it has none."""
+        for name in ('_NET_WM_NAME', 'WM_NAME'):
+            values = self.strings(win, name)
+            if values:
+                return values[0]
+        return ''
+
+    def active_window(self) -> int | None:
+        """The focused application window (_NET_ACTIVE_WINDOW), or None."""
+        value = self.cardinals(self.root, '_NET_ACTIVE_WINDOW', 1)
+        return value[0] if value and value[0] else None
+
     def client_of(self, win: int) -> int | None:
         """The application window (with WM_STATE) of a toplevel: win itself or one of its children."""
         if self.cardinals(win, 'WM_STATE', 1) is not None:
@@ -582,6 +595,47 @@ class TargetTracker(threading.Thread):
             self.state = TargetState(version=old.version + 1, alive=new.alive, visible=new.visible, area=new.area)
             if self._on_change is not None:
                 self._on_change()
+
+
+class ActiveWindowTracker(threading.Thread):
+    """Follows which window has the focus. Read .active from any thread."""
+
+    def __init__(self):
+        super().__init__(name='x11-active-window', daemon=True)
+        self.active: int | None = None
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+        self.join(timeout=2)
+
+    def run(self):
+        try:
+            conn = Connection()
+        except X11Error as e:
+            logger.error(f"Following the focused window failed: {e}")
+            return
+        try:
+            x = conn.x
+            x.XSelectInput(conn.dpy, conn.root, PROPERTY_CHANGE_MASK)
+            x.XFlush(conn.dpy)
+            fd = x.XConnectionNumber(conn.dpy)
+            event = XEvent()
+            last = 0.0
+            while not self._stop_event.is_set():
+                n = 0
+                while x.XPending(conn.dpy):
+                    x.XNextEvent(conn.dpy, ctypes.byref(event))
+                    n += 1
+                now = time.monotonic()
+                if n or now - last > 0.5:
+                    self.active = conn.active_window()
+                    last = now
+                select.select([fd], [], [], 0.1)
+        except Exception as e:
+            logger.error(f"Following the focused window failed: {e}")
+        finally:
+            conn.close()
 
 
 # ------------------------------------------------------------------ picking a window

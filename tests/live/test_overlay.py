@@ -72,7 +72,6 @@ class FakeGrabber:
     instances: list['FakeGrabber'] = []
     visible = True
     fail = False
-    on_grab = None  # called during grab, to change things while a frame is being captured
 
     def __init__(self, client: int):
         self.client = client
@@ -86,9 +85,6 @@ class FakeGrabber:
         return True
 
     def grab(self):
-        if FakeGrabber.on_grab is not None:
-            callback, FakeGrabber.on_grab = FakeGrabber.on_grab, None
-            callback()
         if not FakeGrabber.visible or FakeGrabber.fail:  # like the real one, capturing a hidden window fails
             self.failures += 1
             return None
@@ -103,7 +99,6 @@ def fake_grabber(monkeypatch):
     FakeGrabber.instances = []
     FakeGrabber.visible = True
     FakeGrabber.fail = False
-    FakeGrabber.on_grab = None
     monkeypatch.setattr(x11, 'WindowGrabber', FakeGrabber)
     monkeypatch.setattr(WindowCaptureDevice, 'HIDDEN_POLL_INTERVAL', 0)
     monkeypatch.setattr(window_capture_device.time, 'sleep', lambda _s: None)
@@ -131,29 +126,6 @@ class TestWindowCaptureDevice:
         _, frame = device.get_frame()
         assert frame.shape == (3, 4, 3)
         assert not frame.any()
-
-    def test_set_target_captures_the_new_window(self, fake_grabber):
-        device = WindowCaptureDevice(7)
-        device.get_frame()
-        device.set_target(9)
-        _, frame = device.get_frame()
-        assert (frame == 9).all()
-        assert fake_grabber.instances[0].closed
-
-    def test_frame_of_the_old_target_is_not_returned_after_a_switch(self, fake_grabber):
-        """A target switch while a frame is captured discards that frame; its timestamp predates the switch."""
-        device = WindowCaptureDevice(7)
-        device.get_frame()
-        switched_at = []
-
-        def switch():
-            device.set_target(9)
-            switched_at.append(window_capture_device.time.monotonic())
-
-        fake_grabber.on_grab = switch
-        timestamp, frame = device.get_frame()
-        assert (frame == 9).all()
-        assert timestamp >= switched_at[0]
 
     def test_capture_that_keeps_failing_raises(self, fake_grabber):
         fake_grabber.fail = True

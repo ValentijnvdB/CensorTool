@@ -6,14 +6,18 @@ that don't set it correctly (Flatpak, Snap) are matched by WM_CLASS against the 
 programs (Celluloid, Firefox, ...) hand their arguments to an instance that is already running and exit; their
 existing window is then used, also matched by WM_CLASS.
 
+Windows the program opens later (dialogs, more windows) are found the same way by ProgramWindowWatcher.
+
 The matching (WindowInfo + program names) is meant to be reused by an automatic mode that attaches overlays to
 windows of certain programs.
 """
 from __future__ import annotations
 
+import ctypes
 import os
 import select
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Iterable, Literal
@@ -195,6 +199,87 @@ def find_program_window(conn: x11.Connection, proc: subprocess.Popen, command: l
     finally:
         x.XSelectInput(conn.dpy, conn.root, 0)
         x.XFlush(conn.dpy)
+
+
+class ProgramWindowWatcher(threading.Thread):
+    """
+    Reports the windows a started program opens after its first one: windows of its processes, or (when its first
+    window was recognised by WM_CLASS) windows with its WM_CLASS. on_new is called from this thread.
+    """
+
+    # a window whose _NET_WM_PID and WM_CLASS are still not set after this long is ignored
+    INCOMPLETE_GRACE = 2.0
+
+    def __init__(self, proc: subprocess.Popen, command: list[str], how: Match, first_window: int, known: set[int],
+                 on_new: Callable[[int], None]):
+        """
+        :param first_window: the program's window that was found by find_program_window.
+        :param known: windows that are not the program's new windows (those that existed before it was started).
+        """
+        super().__init__(name='program-window-watcher', daemon=True)
+        self._proc = proc
+        self._names = program_names(command)
+        self._by_class = how != 'pid'
+        self._first_window = first_window
+        self._known = set(known) | {first_window}
+        self._on_new = on_new
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+        self.join(timeout=2)
+
+    def belongs(self, info: x11.WindowInfo, pids: set[int]) -> bool:
+        return info.pid in pids or (self._by_class and class_matches(self._names, info.wm_class))
+
+    def run(self):
+        try:
+            conn = x11.Connection()
+        except x11.X11Error as e:
+            logger.error(f"Watching for new windows failed: {e}")
+            return
+        try:
+            x = conn.x
+            x.XSelectInput(conn.dpy, conn.root, x11.PROPERTY_CHANGE_MASK)  # _NET_CLIENT_LIST changes
+            x.XFlush(conn.dpy)
+            fd = x.XConnectionNumber(conn.dpy)
+            event = x11.XEvent()
+            roots = {self._proc.pid}  # processes whose descendants' windows belong to the program
+            first_pid = conn.window_info(self._first_window).pid
+            if first_pid is not None:
+                roots.add(first_pid)
+            first_seen: dict[int, float] = {}
+            last = 0.0
+            while not self._stop_event.is_set():
+                n = 0
+                while x.XPending(conn.dpy):
+                    x.XNextEvent(conn.dpy, ctypes.byref(event))
+                    n += 1
+                now = time.monotonic()
+                if n or now - last > 0.5:
+                    last = now
+                    self._check(conn, roots, first_seen, now)
+                select.select([fd], [], [], 0.1)
+        except Exception as e:
+            logger.error(f"Watching for new windows failed: {e}")
+        finally:
+            conn.close()
+
+    def _check(self, conn: x11.Connection, roots: set[int], first_seen: dict[int, float], now: float):
+        new = [w for w in conn.client_list() if w not in self._known]
+        if not new:
+            return
+        parents = parent_map()
+        pids = set().union(*(process_tree(r, parents) for r in roots))
+        for win in new:
+            info = conn.window_info(win)
+            if self.belongs(info, pids):
+                self._known.add(win)
+                if info.pid is not None:
+                    roots.add(info.pid)
+                self._on_new(win)
+            elif info.pid is not None or info.wm_class or now - first_seen.setdefault(win, now) > self.INCOMPLETE_GRACE:
+                self._known.add(win)  # someone else's window (or one that never says whose it is)
 
 
 def describe_match(how: Match, command: list[str]) -> None:

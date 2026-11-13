@@ -31,7 +31,7 @@ class WindowDevice(OutputDevice):
             return 'reload'
         return None
 
-    def push_frame(self, frame: np.ndarray, timestamp: float | None = None):
+    def push_frame(self, frame: np.ndarray, timestamp: float | None = None, source=None):
         # follow the frame size (capture region changed, or a webcam with another resolution)
         size = (frame.shape[1], frame.shape[0])
         if size != self._frame_size:

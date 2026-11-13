@@ -236,16 +236,16 @@ In the window, press `q` to quit and `r` to reload the configs. Changes to `conf
 are also picked up as soon as they are saved, so you can tune the censoring while it runs. `pipeline.yml` is only
 read at startup.
 
-### Overlay: censoring a window in place
+### Overlay: censoring windows in place
 
 ```
 pip install -r requirements-overlay.txt   # once: installs PySide6
 python main.py overlay                    # then click the window to censor
-python main.py overlay --window 0x3a00007 # or give its id (from xwininfo or wmctrl -l)
+python main.py overlay --window 0x3a00007 --window 0x4200003  # or give ids (from xwininfo or wmctrl -l)
 python main.py overlay -- celluloid --new-window ~/Videos/clip.mp4  # or start a program and censor its window
 ```
 
-`overlay` captures one window and shows it censored in an overlay that lies exactly over it, so you don't need a
+`overlay` captures a window and shows it censored in an overlay that lies exactly over it, so you don't need a
 second display. The overlay lets clicks, scrolling and typing through to the window below, so you can use it as
 usual. It follows the window when it is moved or resized and hides with it when it is minimised. Other windows,
 menus and panels stay on top of it.
@@ -254,16 +254,23 @@ The overlay is shown before the first frame is censored, so the window is never 
 censored image lags slightly behind the window (the time it takes to censor a frame), which you notice when
 scrolling. Menus, dropdowns and tooltips of the censored window are separate windows and are not censored.
 
-Everything after `--` is a program to start; its first window is censored, and the program keeps running when
-overlay mode stops. Its window can be visible for a moment before the overlay covers it; add `--curtain` to cover
+Everything after `--` is a program to start; its window is censored, and so are the windows it opens later (dialogs,
+more windows). The program keeps running when overlay mode stops. Its window can be visible for a moment before the overlay covers it; add `--curtain` to cover
 your screens while the program starts. Programs that run only once, like Celluloid and Firefox, hand the file to
 the instance that is already running and exit. Overlay mode covers the program's open windows before starting it, so
 the new file isn't shown uncensored there, then censors that instance's window with a warning. Use the program's own
 option for a separate window, such as `celluloid --new-window`.
 
-A tray icon has *Select another window*, *Reload configs* and *Quit*; without a system tray, stop it with Ctrl+C.
-Overlay mode stops when the censored window is closed. It uses the same `config.yml` settings as live mode
-(`live_input_size`, `live_frames_in_flight`, `live_show_fps`); the capture region `live_cap_*` is not used.
+A tray icon has *Add window...*, *Stop censoring* (a list of the censored windows), *Reload configs* and *Quit*;
+without a system tray, stop it with Ctrl+C. Started with `--window` or `--`, overlay mode stops when the last censored
+window is closed. Started without them, it keeps running in the tray so you can add a window, also when you cancel
+the first click or close the last censored window.
+
+All windows share the censoring: windows whose content changes take turns, and the focused window gets three times
+as many turns as the others. A window that doesn't change (a paused video, an idle page) costs almost nothing. At
+most `live_max_windows` windows (`config.yml`, 4 by default) are censored at the same time; a faster PC handles
+more. Overlay mode also uses the live mode settings `live_input_size`, `live_frames_in_flight` and `live_show_fps`;
+the capture region `live_cap_*` is not used.
 
 Overlay mode works on Linux with an X11 session and a compositing window manager. It has been tested on Cinnamon
 (Linux Mint); Wayland, Windows and macOS are not supported yet.
@@ -301,7 +308,7 @@ The endpoints and their request and response formats are described in [docs/http
 | | `--vcam` | off | Output to a virtual camera instead of a window. |
 | | `--vcam-w`, `--vcam-h` | `1920`, `1080` | Virtual camera size. |
 | | `--vcam-fps` | `10` | Virtual camera frame rate. |
-| Overlay | `--window` | click | X11 id of the window to censor, in hex (`0x3a00007`) or decimal. |
+| Overlay | `--window` | click | X11 id of a window to censor, in hex (`0x3a00007`) or decimal. Repeat it for more windows. |
 | | `-- <command>` | - | Start this program and censor its window. Must come last. |
 | | `--curtain` | off | With `-- <command>`: cover the screens while the program starts. |
 | Server | `--host` | `localhost` | Address to listen on. Use `0.0.0.0` to accept connections from other devices. |

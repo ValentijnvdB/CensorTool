@@ -46,6 +46,7 @@ class LiveCensorConfig:
     # optional (may be left out of config.yml)
     input_size: int = 0         # model input size for live frames, 0 = the size in pipeline.yml
     frames_in_flight: int = 2   # frames censored at the same time
+    max_windows: int = 4        # overlay mode: windows censored at the same time, 0 = no limit
 
 
 @dataclass
@@ -342,7 +343,7 @@ _CONFIG_KEYS = ('video_censor_fps', 'comfy_host', 'comfy_port', 'comfy_workflow'
 _OPTIONAL_CONFIG_KEYS = ('server_file_retention_hours', 'server_video_job_grace_seconds',
                          'server_max_video_download_mb')
 _LIVE_KEYS = tuple(f.name for f in fields(LiveCensorConfig))
-_OPTIONAL_LIVE_KEYS = ('input_size', 'frames_in_flight')
+_OPTIONAL_LIVE_KEYS = ('input_size', 'frames_in_flight', 'max_windows')
 
 
 def load_config(path: Path | str) -> Config:
@@ -415,6 +416,8 @@ def validate_config(config: Config):
         raise ValueError(f"live_input_size must be 0 or a positive multiple of 32, got {live.input_size!r}.")
     if not is_int(live.frames_in_flight) or live.frames_in_flight < 1:
         raise ValueError(f"live_frames_in_flight must be a positive integer, got {live.frames_in_flight!r}.")
+    if not is_int(live.max_windows) or live.max_windows < 0:
+        raise ValueError(f"live_max_windows must be 0 (no limit) or a positive integer, got {live.max_windows!r}.")
 
     color = live.cursor_color
     if not isinstance(color, (list, tuple)) or len(color) != 3 or not all(is_int(c) and 0 <= c <= 255 for c in color):
