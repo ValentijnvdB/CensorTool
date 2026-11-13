@@ -26,6 +26,7 @@ class OverlayWindow(QWidget):
     """The overlay window. Paints the newest frame stretched over itself, or a placeholder until there is one."""
 
     PLACEHOLDER_COLOR = QColor(32, 32, 32)
+    CENSORING_TEXT = 'CensorTool: censoring...'
 
     def __init__(self):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowTransparentForInput
@@ -34,6 +35,7 @@ class OverlayWindow(QWidget):
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self.setWindowTitle('CensorTool overlay')
         self.frame: np.ndarray | None = None
+        self.placeholder_text = self.CENSORING_TEXT
 
     def paintEvent(self, _event):
         painter = QPainter(self)
@@ -42,7 +44,8 @@ class OverlayWindow(QWidget):
             painter.fillRect(self.rect(), self.PLACEHOLDER_COLOR)
             painter.setPen(QColor(200, 200, 200))
             painter.setFont(QFont('Sans', 14))
-            painter.drawText(self.rect(), Qt.AlignCenter, 'CensorTool: censoring...')
+            painter.drawText(self.rect().adjusted(8, 8, -8, -8), Qt.AlignCenter | Qt.TextWordWrap,
+                             self.placeholder_text)
             return
         image = QImage(frame.data, frame.shape[1], frame.shape[0], frame.strides[0], QImage.Format_BGR888)
         # stretched when the target was resized and no frame of the new size is censored yet
@@ -132,18 +135,33 @@ class OverlayDevice(OutputDevice):
 
     # ---------------------------------------------------------------- Qt thread
 
-    def add_target(self, client: int, since: float | None = None):
+    def add_target(self, client: int, since: float | None = None, placeholder: str | None = None):
         """
         Cover a window. A placeholder is shown until a frame captured at or after since (time.monotonic()) arrives,
         so frames of an earlier time this window was censored are not shown.
+
+        :param placeholder: the placeholder's text (default: OverlayWindow.CENSORING_TEXT). A window whose frames
+            are never pushed stays hidden behind it.
         """
         if client in self._targets:
             return
         target = _Target(client, since if since is not None else float('-inf'),
                          on_change=lambda: self._bridge.target_changed.emit(client))
+        target.window.placeholder_text = placeholder or OverlayWindow.CENSORING_TEXT
         with self._lock:
             self._targets[client] = target
         self._follow_target(client)
+
+    def set_placeholder(self, client: int, text: str | None = None, since: float | None = None):
+        """Change the placeholder text of a covered window (and when its frames are accepted from, see add_target)."""
+        target = self._targets.get(client)
+        if target is None:
+            return
+        with self._lock:
+            if since is not None:
+                target.accept_since = since
+        target.window.placeholder_text = text or OverlayWindow.CENSORING_TEXT
+        target.window.update()
 
     def remove_target(self, client: int):
         with self._lock:

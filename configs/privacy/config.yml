@@ -48,6 +48,14 @@ live_frames_in_flight: 2
 ### the censoring, so each gets fewer fps; a faster PC handles more. 0 = no limit.
 live_max_windows: 4
 
+### Overlay auto mode (python main.py overlay --auto): censor every window of
+### these programs. An entry is a program name (as in its window class, e.g.
+### celluloid, mpv, firefox) or a mapping with a program and/or a window title
+### (a regular expression, case-insensitive):
+###   [celluloid, {program: firefox, title: 'Private Browsing'}]
+### --auto <program> and the tray's 'Always censor a program...' add to it.
+overlay_auto_programs: []
+
 # Config for the 'ai_remove' censor style.
 # Comfy base url
 comfy_host: "localhost"

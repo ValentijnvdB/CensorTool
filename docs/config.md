@@ -29,6 +29,7 @@ The `live_cap_*` keys are only used by `live` mode; the other keys apply to all 
 | `live_input_size`       | `0`               | Model input size for live frames, a multiple of 32. `0` uses the model's own size. Smaller (e.g. `480`, `416`) is faster but finds small body parts less reliably. Only affects models with a dynamic input size (`resize: rect`), such as NudeNet. Optional. |
 | `live_frames_in_flight` | `2`               | Frames censored at the same time. `2` overlaps capturing, censoring and displaying (about 1.5-2x the fps on a GPU) at the cost of one frame of latency. `1` gives the lowest latency. Optional. |
 | `live_max_windows`      | `4`               | Overlay mode: how many windows are censored at the same time. They share the censoring, so each gets fewer fps; the focused window gets the most. A faster PC handles more. `0` means no limit. Optional. |
+| `overlay_auto_programs` | `[]`              | Overlay auto mode (`--auto`): programs whose windows are always censored. An entry is a program name as in its window class (`celluloid`, `mpv`, `firefox`) or a mapping with a `program` and/or a window `title` (a case-insensitive regular expression), e.g. `[celluloid, {program: firefox, title: 'Private Browsing'}]`. The tray's *Always censor a program...* adds to it. Optional. |
 
 Live mode captures the region above and shows it censored in a window (or a virtual camera with `--vcam`).
 It works best with two displays: the content on one, the censored window on the other.

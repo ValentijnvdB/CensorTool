@@ -132,10 +132,10 @@ def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_heig
 
 
 def start_overlay_censor(window_ids: list[int] | None, censor_config: Path | str, command: list[str] | None,
-                         curtain: bool):
+                         curtain: bool, auto: list[str] | None):
     from app.live.overlay import start_overlay_censor
     try:
-        start_overlay_censor(window_ids, censor_config, command=command, curtain=curtain)
+        start_overlay_censor(window_ids, censor_config, command=command, curtain=curtain, auto=auto)
     except (RuntimeError, ValueError) as e:
         logger.error(str(e))
         sys.exit(1)
@@ -222,6 +222,9 @@ def main():
     overlay_parser.add_argument('--window', default=None, type=window_id_arg, action='append',
                                 help='X11 id of a window to censor (e.g. from xwininfo or wmctrl -l); repeat it '
                                      'for more windows. If not given, you click the window.')
+    overlay_parser.add_argument('--auto', nargs='*', action='extend', default=None, metavar='PROGRAM',
+                                help='Auto mode: censor every window of the programs in overlay_auto_programs '
+                                     '(config.yml) and of the programs given here (e.g. --auto celluloid mpv).')
     overlay_parser.add_argument('--curtain', action='store_true',
                                 help='With a command after --: cover the screens while the program starts, so its '
                                      'window is never visible uncensored.')
@@ -260,6 +263,8 @@ def main():
             parser.error("use either --window or a command after --, not both")
     elif args.curtain:
         parser.error("--curtain needs a command after --")
+    if args.auto is not None and args.mode != 'overlay':
+        parser.error("--auto can only be used with overlay mode")
     create_dirs()
 
     # Initialize the censor app
@@ -320,7 +325,7 @@ def main():
 
     elif args.mode in ['overlay']:
         start_overlay_censor(window_ids=args.window, censor_config=args.censor_config, command=command,
-                             curtain=args.curtain)
+                             curtain=args.curtain, auto=args.auto)
 
     elif args.mode in ['f', 'file', 'files']:
         censor_files(

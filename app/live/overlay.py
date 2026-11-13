@@ -7,10 +7,15 @@ censoring one, reload the configs and quit. Linux with X11 only; needs PySide6 (
 
 The first windows are clicked, given by id, or the window of a program that is started for it (see launch.py);
 windows that program opens later are added automatically. While such a program starts, an optional curtain
-covers the screens, so its window is never visible uncensored.
+covers the screens, so its window is never visible uncensored. In auto mode (auto.py), every window of certain
+programs is censored.
 
 All windows share one live loop and pipeline: they take turns, and the focused window gets the most turns
-(quick.TurnScheduler). At most live_max_windows (config.yml) windows are censored.
+(quick.TurnScheduler). At most live_max_windows (config.yml) windows are censored. Windows that were found
+automatically (auto mode, a started program's windows) beyond that are hidden behind a placeholder instead; the
+tray can censor them once there is room, or show them uncensored.
+
+A window the user stops censoring (or shows uncensored) is not censored automatically again until it is closed.
 
 Threads: Qt runs in the main thread, the live loop (app/live/quick.py) in a worker thread, the live loop captures
 each window in a capture thread of its own; window picking, following the focus and watching for a started
@@ -77,7 +82,8 @@ LAUNCH_TIMEOUT = 30
 
 
 def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Path | str | None = None,
-                         command: list[str] | None = None, curtain: bool = False):
+                         command: list[str] | None = None, curtain: bool = False,
+                         auto: list[str] | None = None):
     """
     Start overlay mode.
 
@@ -85,6 +91,8 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
     :param censor_config: censor config file, None for the profile's.
     :param command: start this program and censor its window. The program keeps running when overlay mode stops.
     :param curtain: with command: cover the screens until the program's window is covered by the overlay.
+    :param auto: start in auto mode, with these programs in addition to overlay_auto_programs in config.yml.
+        None: auto mode is off (it can be switched on from the tray).
     """
     problem = x11.session_problem()
     if problem:
@@ -111,7 +119,11 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
             started = _launch(command, qt, cover_existing=curtain_widget is None)
             curtain_widget = curtain_widget or started.covers
             targets = [started.window]
-        elif not window_ids:
+        elif window_ids:
+            targets = list(dict.fromkeys(_resolve_target(w) for w in window_ids))
+        elif auto is not None:
+            targets = []  # auto mode finds the windows
+        else:
             print("Click the window to censor (right click or Escape cancels).")
             window_id = x11.pick_window()
             if window_id is None:
@@ -119,8 +131,6 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
                 targets = []  # keeps running in the tray (it stops right away when there is no tray)
             else:
                 targets = [_resolve_target(window_id)]
-        else:
-            targets = list(dict.fromkeys(_resolve_target(w) for w in window_ids))
     except KeyboardInterrupt:
         logger.info("Interrupted.")
         if curtain_widget is not None:
@@ -131,10 +141,11 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
             curtain_widget.close()
         raise
 
-    # started with --window or a command: stop when those windows are closed. Picked: keep running in the tray.
-    quit_when_empty = bool(command or window_ids)
+    # started with --window or a command: stop when those windows are closed. Picked or auto mode: keep running in
+    # the tray.
+    quit_when_empty = bool(command or window_ids) and auto is None
     OverlayApp(targets, censor_config, curtain=curtain_widget, started=started,
-               quit_when_empty=quit_when_empty).run()
+               quit_when_empty=quit_when_empty, auto=auto).run()
 
 
 @dataclass
@@ -294,13 +305,19 @@ class OverlayApp:
     # a curtain is removed after this long anyway (e.g. the program started minimised: nothing to cover)
     CURTAIN_TIMEOUT_S = 10
 
+    HIDDEN_TEXT = ("Hidden by CensorTool: the maximum number of windows is censored already (live_max_windows).\n"
+                   "Censor it or show it uncensored from the tray icon.")
+
     def __init__(self, targets: list[int], censor_config: Path | None, curtain: Curtain | None = None,
-                 started: StartedProgram | None = None, quit_when_empty: bool = True):
+                 started: StartedProgram | None = None, quit_when_empty: bool = True,
+                 auto: list[str] | None = None):
         """
         :param targets: the windows to censor first.
         :param started: the program that was started for overlay mode: its new windows are censored too.
         :param quit_when_empty: stop when no censored window is left (else keep running in the tray).
+        :param auto: start auto mode with these programs in addition to the config's; None: auto mode is off.
         """
+        from .auto import AutoRule, AutoWatcher
         from PySide6.QtWidgets import QApplication
 
         from .output_devices.overlay_device import OverlayDevice
@@ -319,6 +336,11 @@ class OverlayApp:
         self.stop_event = threading.Event()
         self._picking = threading.Lock()
         self._error: BaseException | None = None
+        self.hidden: set[int] = set()  # covered by a placeholder, not censored (over the limit)
+        self.released: set[int] = set()  # the user stopped censoring them: not censored automatically again
+        self.auto_enabled = auto is not None
+        self.auto_session_rules: list[AutoRule] = [AutoRule(program=p) for p in (auto or [])]
+        self._config_rules: tuple[object, list[AutoRule]] = (None, [])
 
         self.overlay = OverlayDevice(on_target_closed=self._target_closed)
         self.sources = WindowSources()
@@ -335,6 +357,12 @@ class OverlayApp:
                                                 known=started.before, on_new=self._bridge.discovered.emit)
             self.watcher.start()
 
+        self.auto_watcher = AutoWatcher(self._auto_rules, on_match=self._bridge.auto_matched.emit,
+                                        on_gone=self._bridge.window_gone.emit)
+        self.auto_watcher.start()
+        if self.auto_enabled:
+            self._log_auto_rules()
+
     def _make_bridge(self):
         from PySide6.QtCore import QObject, Qt, Signal, Slot
 
@@ -342,13 +370,19 @@ class OverlayApp:
 
         class Bridge(QObject):
             picked = Signal(object)  # window ids don't fit a signed 32-bit int
+            program_picked = Signal(object)
             discovered = Signal(object)
+            auto_matched = Signal(object)
+            window_gone = Signal(object)
             quit_requested = Signal()
 
             def __init__(self):
                 super().__init__()
                 self.picked.connect(self._picked, Qt.QueuedConnection)
+                self.program_picked.connect(self._program_picked, Qt.QueuedConnection)
                 self.discovered.connect(self._discovered, Qt.QueuedConnection)
+                self.auto_matched.connect(self._auto_matched, Qt.QueuedConnection)
+                self.window_gone.connect(self._window_gone, Qt.QueuedConnection)
                 self.quit_requested.connect(self._quit, Qt.QueuedConnection)
 
             @Slot(object)
@@ -356,9 +390,22 @@ class OverlayApp:
                 app.add_window(client, picked=True)
 
             @Slot(object)
+            def _program_picked(self, client):
+                app.always_censor_program_of(client)
+
+            @Slot(object)
             def _discovered(self, client):
                 logger.info(f"{app._program_name} opened window {client:#x}.")
-                app.add_window(client)
+                app.add_window(client, found=True)
+
+            @Slot(object)
+            def _auto_matched(self, client):
+                app.auto_matched(client)
+
+            @Slot(object)
+            def _window_gone(self, client):
+                app.hidden.discard(client)
+                app.released.discard(client)
 
             @Slot()
             def _quit(self):
@@ -395,11 +442,20 @@ class OverlayApp:
             target_menu.addAction(action)
             self._actions.append(action)
 
-        add_action(menu, 'Add window...', self._start_pick)
+        add_action(menu, 'Add window...', lambda: self._start_pick(self._bridge.picked))
         self._stop_menu = menu.addMenu('Stop censoring')
         self._stop_menu.aboutToShow.connect(self._fill_stop_menu)
-        add_action(menu, 'Reload configs', lambda: self.overlay.add_command('reload'))
+        self._hidden_menu = menu.addMenu('Hidden windows')
+        self._hidden_menu.aboutToShow.connect(self._fill_hidden_menu)
         menu.addSeparator()
+        self._auto_action = QAction('Auto mode', menu)
+        self._auto_action.setCheckable(True)
+        self._auto_action.setChecked(self.auto_enabled)
+        self._auto_action.toggled.connect(self.set_auto)
+        menu.addAction(self._auto_action)
+        add_action(menu, 'Always censor a program...', lambda: self._start_pick(self._bridge.program_picked))
+        menu.addSeparator()
+        add_action(menu, 'Reload configs', lambda: self.overlay.add_command('reload'))
         add_action(menu, 'Quit', self.quit)
         self._menu = menu
 
@@ -411,42 +467,92 @@ class OverlayApp:
         tray.show()
         return tray
 
+    @staticmethod
+    def _labels(windows: list[int]) -> dict[int, str]:
+        """Menu labels of windows: their title and id."""
+        conn = x11.Connection()
+        try:
+            labels = {}
+            for win in windows:
+                title = conn.title(win) or 'untitled'
+                if len(title) > 60:
+                    title = title[:57] + '...'
+                labels[win] = f"{title} ({win:#x})"
+            return labels
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _add_empty_entry(menu):
+        from PySide6.QtGui import QAction
+        action = QAction('(no windows)', menu)
+        action.setEnabled(False)
+        menu.addAction(action)
+
     def _fill_stop_menu(self):
         from PySide6.QtGui import QAction
 
         self._stop_menu.clear()
-        targets = self.overlay.targets
-        if not targets:
-            action = QAction('(no windows)', self._stop_menu)
-            action.setEnabled(False)
+        censored = self.censored_windows()
+        if not censored:
+            self._add_empty_entry(self._stop_menu)
+        for win, label in self._labels(censored).items():
+            action = QAction(label, self._stop_menu)
+            action.triggered.connect(lambda _checked=False, w=win: self.remove_window(w))
             self._stop_menu.addAction(action)
-            return
-        conn = x11.Connection()
-        try:
-            titles = {t: conn.title(t) for t in targets}
-        finally:
-            conn.close()
-        for target in targets:
-            title = titles[target] or 'untitled'
-            if len(title) > 60:
-                title = title[:57] + '...'
-            action = QAction(f"{title} ({target:#x})", self._stop_menu)
-            action.triggered.connect(lambda _checked=False, t=target: self.remove_window(t))
-            self._stop_menu.addAction(action)
+
+    def _fill_hidden_menu(self):
+        from PySide6.QtGui import QAction
+
+        self._hidden_menu.clear()
+        hidden = [w for w in self.overlay.targets if w in self.hidden]
+        if not hidden:
+            self._add_empty_entry(self._hidden_menu)
+        for win, label in self._labels(hidden).items():
+            submenu = self._hidden_menu.addMenu(label)
+            for text, callback in (('Censor', self.censor_hidden), ('Show uncensored', self.show_uncensored)):
+                action = QAction(text, submenu)
+                action.triggered.connect(lambda _checked=False, w=win, c=callback: c(w))
+                submenu.addAction(action)
 
     # ---------------------------------------------------------------- adding and removing windows
 
-    def add_window(self, client: int, picked: bool = False):
-        from ..config import CONFIG
+    def censored_windows(self) -> list[int]:
+        return [w for w in self.overlay.targets if w not in self.hidden]
 
+    def _full(self) -> int:
+        """The window limit when it is reached, else 0."""
+        from ..config import CONFIG
+        limit = CONFIG.live.max_windows
+        return limit if limit and len(self.censored_windows()) >= limit else 0
+
+    def add_window(self, client: int, picked: bool = False, found: bool = False):
+        """
+        Censor a window.
+
+        :param picked: the user selected it.
+        :param found: it was found automatically: when the limit is reached, it is hidden instead.
+        """
+        if client in self.hidden:
+            if picked:
+                self.censor_hidden(client)
+            return
         if client in self.overlay.targets:
             if picked:
                 logger.info(f"Window {client:#x} is censored already.")
             return
-        limit = CONFIG.live.max_windows
-        if limit and len(self.overlay.targets) >= limit:
-            logger.warning(f"Not censoring window {client:#x}: {limit} windows are censored already "
-                           f"(live_max_windows in config.yml).")
+        if picked:
+            self.released.discard(client)
+        if limit := self._full():
+            if found:
+                logger.warning(f"Hiding window {client:#x}: {limit} windows are censored already "
+                               f"(live_max_windows in config.yml). Censor it or show it uncensored from the tray "
+                               f"icon (Hidden windows).")
+                self.overlay.add_target(client, placeholder=self.HIDDEN_TEXT)
+                self.hidden.add(client)
+            else:
+                logger.warning(f"Not censoring window {client:#x}: {limit} windows are censored already "
+                               f"(live_max_windows in config.yml).")
             return
         logger.info(f"Censoring window {client:#x}.")
         # the overlay is shown before anything is captured, so the window is never visible uncensored. Frames
@@ -454,34 +560,132 @@ class OverlayApp:
         self.overlay.add_target(client, since=time.monotonic())
         self.sources.add(client)
 
+    def censor_hidden(self, client: int):
+        if client not in self.hidden:
+            return
+        if limit := self._full():
+            logger.warning(f"Can't censor window {client:#x}: {limit} windows are censored already "
+                           f"(live_max_windows in config.yml). Stop censoring another window first.")
+            return
+        logger.info(f"Censoring window {client:#x}.")
+        self.hidden.discard(client)
+        self.overlay.set_placeholder(client, None, since=time.monotonic())
+        self.sources.add(client)
+
+    def show_uncensored(self, client: int):
+        logger.info(f"Showing window {client:#x} uncensored.")
+        self.hidden.discard(client)
+        self.released.add(client)
+        self.overlay.remove_target(client)
+        self._check_empty()
+
     def remove_window(self, client: int):
         logger.info(f"Stopped censoring window {client:#x}.")
+        self.released.add(client)
         self.sources.remove(client)
         self.overlay.remove_target(client)
         self._check_empty()
 
     def _target_closed(self, client: int):
         self.sources.remove(client)
+        self.hidden.discard(client)
+        self.released.discard(client)
         self._check_empty()
+
+    # ---------------------------------------------------------------- auto mode
+
+    def _auto_rules(self) -> list:
+        """The rules of auto mode (called from the auto watcher's thread); none while it is off."""
+        from ..config import CONFIG
+        from .auto import parse_rules
+
+        if not self.auto_enabled:
+            return []
+        entries = CONFIG.overlay_auto_programs
+        cached_entries, rules = self._config_rules
+        if entries is not cached_entries:
+            try:
+                rules = parse_rules(entries)
+            except ValueError as e:  # validated when the config was loaded, so not expected
+                logger.error(str(e))
+                rules = []
+            self._config_rules = (entries, rules)
+        return rules + self.auto_session_rules
+
+    def _log_auto_rules(self):
+        rules = self._auto_rules()
+        if rules:
+            logger.info(f"Auto mode: censoring windows of {', '.join(str(r) for r in rules)}.")
+        else:
+            logger.warning("Auto mode is on, but no programs are set: add them to overlay_auto_programs in "
+                           "config.yml, give them with --auto, or use 'Always censor a program...' in the tray.")
+
+    def set_auto(self, enabled: bool):
+        if enabled == self.auto_enabled:
+            return
+        self.auto_enabled = enabled
+        if self.tray is not None and self._auto_action.isChecked() != enabled:
+            self._auto_action.setChecked(enabled)
+        if enabled:
+            self._log_auto_rules()
+            self.auto_watcher.rescan()  # also windows it reported while auto mode was being switched off
+        else:
+            logger.info("Auto mode is off: new windows are not censored automatically.")
+
+    def auto_matched(self, client: int):
+        if not self.auto_enabled or client in self.released or client in self.overlay.targets:
+            return
+        conn = x11.Connection()
+        try:
+            title = conn.title(client)
+        finally:
+            conn.close()
+        logger.info(f"Auto mode: window {client:#x} ({title or 'untitled'}).")
+        self.add_window(client, found=True)
+
+    def always_censor_program_of(self, client: int):
+        from ..config import add_overlay_auto_program
+        from .auto import AutoRule, program_name_of
+
+        conn = x11.Connection()
+        try:
+            name = program_name_of(conn.window_info(client).wm_class)
+        finally:
+            conn.close()
+        if name is None:
+            logger.warning(f"Window {client:#x} doesn't say which program it belongs to (no WM_CLASS).")
+            return
+        rule = AutoRule(program=name)
+        if rule not in self.auto_session_rules:
+            self.auto_session_rules = self.auto_session_rules + [rule]  # a new list: read by the auto watcher
+        try:
+            path = add_overlay_auto_program(name)
+            logger.info(f"Always censoring {name}: added it to overlay_auto_programs in {path}.")
+        except Exception as e:
+            logger.error(f"Censoring {name} for now, but saving it to config.yml failed: {e}")
+        self.set_auto(True)
+        self.released.discard(client)
+        self.add_window(client, picked=True)
 
     def _check_empty(self):
         if self.overlay.targets:
             return
-        if self.quit_when_empty or self.tray is None:
+        if self.quit_when_empty or (self.tray is None and not self.auto_enabled):
             self.quit()
-        else:
+        elif not self.auto_enabled:
             logger.info("No windows are censored; add one from the tray icon.")
 
-    def _start_pick(self):
+    def _start_pick(self, signal):
+        """Let the user click a window; its id is emitted with signal."""
         if not self._picking.acquire(blocking=False):
             return  # already picking
-        logger.info("Click the window to censor (right click or Escape cancels).")
+        logger.info("Click a window (right click or Escape cancels).")
 
         def pick():
             try:
                 client = x11.pick_window(exclude=self.overlay.overlay_window_ids(), cancel=self.stop_event)
                 if client is not None:
-                    self._bridge.picked.emit(client)
+                    signal.emit(client)
                 else:
                     logger.info("No window selected.")
             except Exception as e:
@@ -558,6 +762,7 @@ class OverlayApp:
             raise self._error
 
     def _cleanup(self):
+        self.auto_watcher.stop()
         if self.watcher is not None:
             self.watcher.stop()
         self._close_curtain()

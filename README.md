@@ -243,6 +243,7 @@ pip install -r requirements-overlay.txt   # once: installs PySide6
 python main.py overlay                    # then click the window to censor
 python main.py overlay --window 0x3a00007 --window 0x4200003  # or give ids (from xwininfo or wmctrl -l)
 python main.py overlay -- celluloid --new-window ~/Videos/clip.mp4  # or start a program and censor its window
+python main.py overlay --auto celluloid mpv  # or censor every window of these programs (auto mode)
 ```
 
 `overlay` captures a window and shows it censored in an overlay that lies exactly over it, so you don't need a
@@ -261,15 +262,34 @@ the instance that is already running and exit. Overlay mode covers the program's
 the new file isn't shown uncensored there, then censors that instance's window with a warning. Use the program's own
 option for a separate window, such as `celluloid --new-window`.
 
-A tray icon has *Add window...*, *Stop censoring* (a list of the censored windows), *Reload configs* and *Quit*;
-without a system tray, stop it with Ctrl+C. Started with `--window` or `--`, overlay mode stops when the last censored
-window is closed. Started without them, it keeps running in the tray so you can add a window, also when you cancel
-the first click or close the last censored window.
+A tray icon has *Add window...*, *Stop censoring* (a list of the censored windows), *Hidden windows* (see below),
+*Auto mode*, *Always censor a program...*, *Reload configs* and *Quit*; without a system tray, stop it with Ctrl+C.
+Started with `--window` or `--` (and without `--auto`), overlay mode stops when the last censored window is closed.
+Otherwise it keeps running in the tray so you can add a window, also when you cancel the first click or close the
+last censored window. A window you stop censoring isn't censored automatically again until it is closed.
+
+**Auto mode** (`--auto`, or *Auto mode* in the tray) censors every window of the programs listed in
+`overlay_auto_programs` in `config.yml`, including windows that are open already and windows they open later.
+Programs given with `--auto` are added to that list for this run; *Always censor a program...* asks you to click a
+window and adds its program to the list in `config.yml`, so it applies from then on. An entry can also match the
+window title, with a case-insensitive regular expression:
+
+```yaml
+overlay_auto_programs: [celluloid, mpv, {program: firefox, title: 'Private Browsing'}]
+```
+
+Programs are matched by their window class (`xprop WM_CLASS` shows it), ignoring case and a reverse-domain prefix,
+so `celluloid` matches `io.github.celluloid_player.Celluloid`. A window is censored as soon as its title matches,
+and stays censored when the title changes back. Auto mode notices a new window about when it appears, but its overlay
+can follow a frame or two later (about 20-35 ms in tests), so a new window can be visible uncensored very briefly.
+`--auto` can be combined with `--window` and with `-- <command>`.
 
 All windows share the censoring: windows whose content changes take turns, and the focused window gets three times
 as many turns as the others. A window that doesn't change (a paused video, an idle page) costs almost nothing. At
 most `live_max_windows` windows (`config.yml`, 4 by default) are censored at the same time; a faster PC handles
-more. Overlay mode also uses the live mode settings `live_input_size`, `live_frames_in_flight` and `live_show_fps`;
+more. A window found automatically (auto mode, or a window a started program opens) beyond that limit is hidden
+behind a dark placeholder instead; *Hidden windows* in the tray can censor it once you stopped censoring another,
+or show it uncensored. Overlay mode also uses the live mode settings `live_input_size`, `live_frames_in_flight` and `live_show_fps`;
 the capture region `live_cap_*` is not used.
 
 Overlay mode works on Linux with an X11 session and a compositing window manager. It has been tested on Cinnamon
@@ -311,6 +331,7 @@ The endpoints and their request and response formats are described in [docs/http
 | Overlay | `--window` | click | X11 id of a window to censor, in hex (`0x3a00007`) or decimal. Repeat it for more windows. |
 | | `-- <command>` | - | Start this program and censor its window. Must come last. |
 | | `--curtain` | off | With `-- <command>`: cover the screens while the program starts. |
+| | `--auto [PROGRAM ...]` | off | Auto mode: censor every window of the programs in `overlay_auto_programs` (`config.yml`) and of the programs given here. |
 | Server | `--host` | `localhost` | Address to listen on. Use `0.0.0.0` to accept connections from other devices. |
 | | `--port` | `8443` | Port to listen on. |
 | | `--ssl` | off | Use HTTPS. |

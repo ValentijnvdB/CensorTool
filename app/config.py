@@ -64,6 +64,8 @@ class Config:
     server_file_retention_hours: float      = 24  # HTTP server: remove files unused this long; 0 keeps them
     server_video_job_grace_seconds: float   = 30  # HTTP server: video work without jobs goes on this long
     server_max_video_download_mb: float     = 500  # HTTP server: largest video it downloads (video_url)
+    # overlay auto mode: programs (and/or window titles) whose windows are censored, see app/live/auto.py
+    overlay_auto_programs: list             = field(default_factory=list)
 
     # --- from the command line ---
     debug: bool                             = False
@@ -341,7 +343,7 @@ def read_censor_config_from_file_w_hash(path: Path = None, prev_hash: str = None
 
 _CONFIG_KEYS = ('video_censor_fps', 'comfy_host', 'comfy_port', 'comfy_workflow')
 _OPTIONAL_CONFIG_KEYS = ('server_file_retention_hours', 'server_video_job_grace_seconds',
-                         'server_max_video_download_mb')
+                         'server_max_video_download_mb', 'overlay_auto_programs')
 _LIVE_KEYS = tuple(f.name for f in fields(LiveCensorConfig))
 _OPTIONAL_LIVE_KEYS = ('input_size', 'frames_in_flight', 'max_windows')
 
@@ -402,6 +404,11 @@ def validate_config(config: Config):
             raise ValueError(f"{name} must be >= 0, got {getattr(config, name)!r}.")
     if not is_number(config.server_max_video_download_mb) or config.server_max_video_download_mb <= 0:
         raise ValueError(f"server_max_video_download_mb must be > 0, got {config.server_max_video_download_mb!r}.")
+
+    from app.live.auto import parse_rules  # not at the top: app.live imports this module
+    if config.overlay_auto_programs is None:
+        config.overlay_auto_programs = []
+    parse_rules(config.overlay_auto_programs)
 
     live = config.live
     for name in ('cap_top', 'cap_left'):
@@ -490,6 +497,40 @@ def _apply_config(new: Config):
     """Copy all values of new into the global CONFIG object."""
     for f in fields(Config):
         setattr(CONFIG, f.name, getattr(new, f.name))
+
+
+def add_overlay_auto_program(name: str) -> Path:
+    """
+    Add a program to overlay_auto_programs in the config.yml in use, keeping the rest of the file as it is.
+    Nothing changes when it is listed already.
+
+    :return: the config file.
+    :raises ValueError: if the file could not be updated safely.
+    """
+    import re
+
+    path = _config_path
+    text = path.read_text()
+    data = yaml.safe_load(text) or {}
+    entries = list(data.get('overlay_auto_programs') or [])
+    if any(isinstance(e, str) and e.lower() == name.lower() for e in entries):
+        return path
+    entries.append(name)
+    line = 'overlay_auto_programs: ' + yaml.safe_dump(entries, default_flow_style=True, width=1 << 20).strip()
+    # the key with its value: on the same line, and/or on the indented or '- ' lines below it
+    existing = re.compile(r'^overlay_auto_programs:.*(?:\n(?:[ \t]+\S.*|-\s.*))*', re.MULTILINE)
+    if existing.search(text):
+        new_text = existing.sub(lambda _m: line, text, count=1)
+    else:
+        new_text = text.rstrip('\n') + '\n\n### Overlay auto mode: programs whose windows are always censored\n' + line + '\n'
+    new_data = yaml.safe_load(new_text) or {}
+    if new_data.get('overlay_auto_programs') != entries \
+            or {k: v for k, v in new_data.items() if k != 'overlay_auto_programs'} \
+            != {k: v for k, v in data.items() if k != 'overlay_auto_programs'}:
+        raise ValueError(f"Could not add {name!r} to overlay_auto_programs in {path} without changing other "
+                         f"settings; add it by hand.")
+    path.write_text(new_text)
+    return path
 
 
 def current_profile() -> str | None:

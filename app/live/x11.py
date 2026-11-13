@@ -34,6 +34,9 @@ KEY_PRESS_MASK = 1 << 0
 BUTTON_PRESS_MASK, BUTTON_RELEASE_MASK = 1 << 2, 1 << 3
 STRUCTURE_NOTIFY_MASK, SUBSTRUCTURE_NOTIFY_MASK = 1 << 17, 1 << 19
 PROPERTY_CHANGE_MASK = 1 << 22
+CREATE_NOTIFY = 16
+DESTROY_NOTIFY = 17
+PROPERTY_NOTIFY = 28
 IS_VIEWABLE = 2
 INPUT_OUTPUT = 1
 GRAB_MODE_ASYNC = 1
@@ -83,9 +86,22 @@ class XAnyEvent(ctypes.Structure):
                 ('display', ctypes.c_void_p), ('window', Window)]
 
 
+class XCreateWindowEvent(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                ('display', ctypes.c_void_p), ('parent', Window), ('window', Window), ('x', ctypes.c_int),
+                ('y', ctypes.c_int), ('width', ctypes.c_int), ('height', ctypes.c_int),
+                ('border_width', ctypes.c_int), ('override_redirect', ctypes.c_int)]
+
+
+class XPropertyEvent(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                ('display', ctypes.c_void_p), ('window', Window), ('atom', Atom), ('time', Time),
+                ('state', ctypes.c_int)]
+
+
 class XEvent(ctypes.Union):
     _fields_ = [('type', ctypes.c_int), ('any', XAnyEvent), ('button', XButtonEvent), ('key', XKeyEvent),
-                ('pad', ctypes.c_long * 24)]
+                ('create', XCreateWindowEvent), ('property', XPropertyEvent), ('pad', ctypes.c_long * 24)]
 
 
 class X11Error(RuntimeError):
@@ -326,6 +342,17 @@ class Connection:
             if values:
                 return values[0]
         return ''
+
+    def window_type(self, win: int) -> str | None:
+        """The window's first _NET_WM_WINDOW_TYPE without its prefix (e.g. 'NORMAL', 'DIALOG', 'DOCK'), or None."""
+        types = self.cardinals(win, '_NET_WM_WINDOW_TYPE', 1)
+        if not types:
+            return None
+        for name in ('NORMAL', 'DIALOG', 'DOCK', 'DESKTOP', 'UTILITY', 'SPLASH', 'TOOLBAR', 'MENU',
+                     'NOTIFICATION'):
+            if types[0] == self.atom(f'_NET_WM_WINDOW_TYPE_{name}'):
+                return name
+        return 'OTHER'
 
     def active_window(self) -> int | None:
         """The focused application window (_NET_ACTIVE_WINDOW), or None."""
