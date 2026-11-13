@@ -3,8 +3,8 @@
 General settings: video sampling, the live capture region and the ComfyUI connection for `ai_remove`.
 Every profile needs one; copy it from `configs/nudity/config.yml` when you make a new profile.
 
-While live or webcam censoring runs, changes to this file are applied as soon as it is saved (press `r` in the
-window to force a reload). An invalid file is reported and the previous settings are kept.
+While live, webcam or overlay censoring runs, changes to this file are applied as soon as it is saved (press `r` in the
+window, or *Reload configs* in the overlay's tray menu, to force a reload). An invalid file is reported and the previous settings are kept.
 
 Models, devices, workers and input sizes are not set here but in [pipeline.yml](pipeline_config.md).
 
@@ -14,7 +14,9 @@ Models, devices, workers and input sizes are not set here but in [pipeline.yml](
 |--------------------|---------|-------------|
 | `video_censor_fps` | `15`    | How many frames per second are run through the models. The censor boxes of an analysed frame are used for the frames after it (see `time_safety` in the [censor config](censor_config.md#censor-box)). Higher is more accurate but slower. `0` analyses every frame. |
 
-## Live and webcam
+## Live, webcam and overlay
+
+The `live_cap_*` keys are only used by `live` mode; the other keys apply to all three modes.
 
 | Key                     | Default           | Description |
 |-------------------------|-------------------|-------------|

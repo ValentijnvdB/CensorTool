@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 import constants
-from .generic import OutputDevice
+from .generic import Command, OutputDevice
 from ...config import CONFIG
 
 
@@ -22,7 +22,16 @@ class WindowDevice(OutputDevice):
     def close(self):
         cv2.destroyAllWindows()
 
-    def push_frame(self, frame: np.ndarray):
+    def poll_command(self) -> Command | None:
+        key = cv2.waitKey(1)
+        if key == ord('q'):
+            cv2.destroyAllWindows()
+            return 'quit'
+        if key == ord('r'):
+            return 'reload'
+        return None
+
+    def push_frame(self, frame: np.ndarray, timestamp: float | None = None):
         # follow the frame size (capture region changed, or a webcam with another resolution)
         size = (frame.shape[1], frame.shape[0])
         if size != self._frame_size:

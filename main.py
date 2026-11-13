@@ -131,6 +131,23 @@ def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_heig
     start_live_censor(device_id, use_vcam, vcam_width, vcam_height, vcam_fps, censor_config)
 
 
+def start_overlay_censor(window_id: int | None, censor_config: Path | str):
+    from app.live.overlay import start_overlay_censor
+    try:
+        start_overlay_censor(window_id, censor_config)
+    except (RuntimeError, ValueError) as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+
+def window_id_arg(value: str) -> int:
+    """An X11 window id, in hex (0x...) or decimal."""
+    try:
+        return int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a window id: {value!r} (use e.g. 0x3a00007)") from None
+
+
 def serve_http(host, port, ssl_file, ssl_key, use_ssl, debug):
     from server import http_server
     http_server.start_server(host=host, port=port, use_https=use_ssl, cert_file=ssl_file, key_file=ssl_key, debug=debug)
@@ -162,6 +179,7 @@ def get_mode_overview():
         "'file': censor images and videos from file."
         "'live': real time censoring. "
         "'webcam': real time webcam censoring. "
+        "'overlay': censor a window in place (Linux/X11). "
         "'http: start the http server."
     )
 
@@ -189,6 +207,12 @@ def main():
     lw_parser.add_argument('--vcam-w', default=1920, type=int, help='Virtual camera width.')
     lw_parser.add_argument('--vcam-h', default=1080, type=int, help='Virtual camera height.')
     lw_parser.add_argument('--vcam-fps', default=10, type=int, help='Virtual camera target fps.')
+
+    # overlay mode
+    overlay_parser = parser.add_argument_group(title='Overlay arguments')
+    overlay_parser.add_argument('--window', default=None, type=window_id_arg,
+                                help='X11 id of the window to censor (e.g. from xwininfo or wmctrl -l). '
+                                     'If not given, you click the window.')
 
     # flags
     flags_parser = parser.add_argument_group(title='General flags')
@@ -268,6 +292,9 @@ def main():
             vcam_fps=args.vcam_fps,
             censor_config=args.censor_config
         )
+
+    elif args.mode in ['overlay']:
+        start_overlay_censor(window_id=args.window, censor_config=args.censor_config)
 
     elif args.mode in ['f', 'file', 'files']:
         censor_files(

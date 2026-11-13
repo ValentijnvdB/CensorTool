@@ -1,0 +1,2 @@
+# Optional: needed for overlay mode (python main.py overlay), Linux with X11 only.
+PySide6

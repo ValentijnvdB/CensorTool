@@ -8,7 +8,6 @@ from threading import Condition, Event, Thread
 
 import cv2
 import numpy as np
-import pyautogui
 from loguru import logger
 
 from core.backend import cc
@@ -90,6 +89,8 @@ def draw_cursor(frame: np.ndarray, region: Region) -> np.ndarray:
     if region is None:
         return frame
 
+    import pyautogui  # only needed for screen captures, and it needs a display when imported
+
     left, top, width, height = region
     cx, cy = pyautogui.position()
     cx -= left
@@ -139,12 +140,11 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
             while not stop_event.is_set():
                 try:
                     # check user input
-                    key = cv2.waitKey(1)
-                    if key == ord("q"):
-                        cv2.destroyAllWindows()
+                    command = output_device.poll_command()
+                    if command == 'quit':
                         stop_event.set()
                         break
-                    force_reload = key == ord("r")
+                    force_reload = command == 'reload'
 
                     # reload config.yml and the censor config if they changed. The censor config is also reread
                     # when config.yml changed, because it takes the comfy settings from it.
@@ -216,7 +216,7 @@ def live_censor_loop(stop_event: Event, input_device: InputDevice, output_device
                     elif not push_unchanged:
                         continue
 
-                    output_device.push_frame(draw_cursor(shown, shown_region))
+                    output_device.push_frame(draw_cursor(shown, shown_region), timestamp=shown_ts)
                 except Exception as e:
                     log_str = f"Error: {e}"
                     if CONFIG.debug:

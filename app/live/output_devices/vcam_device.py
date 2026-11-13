@@ -32,7 +32,7 @@ class VcamDevice(OutputDevice):
     def close(self):
         self.device.close()
 
-    def push_frame(self, frame: np.ndarray):
+    def push_frame(self, frame: np.ndarray, timestamp: float | None = None):
         # the virtual camera only accepts frames of exactly its own size
         self.device.send(letterbox(frame, self.device.width, self.device.height))
         self.device.sleep_until_next_frame()

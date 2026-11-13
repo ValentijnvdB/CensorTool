@@ -196,6 +196,7 @@ python main.py <mode> [arguments]
 | `file` (`f`, `files`) | Censor the images and videos in the input folder (or a single file). |
 | `live`             | Censor a region of your screen in real time. |
 | `webcam`           | Censor a webcam in real time. |
+| `overlay`          | Censor a window in place, in real time (Linux with X11). |
 | `http` (`https`)   | Start the HTTP server. |
 | `init`             | Create the data folders. |
 | `validate`         | Check which features work on this machine. |
@@ -235,6 +236,30 @@ In the window, press `q` to quit and `r` to reload the configs. Changes to `conf
 are also picked up as soon as they are saved, so you can tune the censoring while it runs. `pipeline.yml` is only
 read at startup.
 
+### Overlay: censoring a window in place
+
+```
+pip install -r requirements-overlay.txt   # once: installs PySide6
+python main.py overlay                    # then click the window to censor
+python main.py overlay --window 0x3a00007 # or give its id (from xwininfo or wmctrl -l)
+```
+
+`overlay` captures one window and shows it censored in an overlay that lies exactly over it, so you don't need a
+second display. The overlay lets clicks, scrolling and typing through to the window below, so you can use it as
+usual. It follows the window when it is moved or resized and hides with it when it is minimised. Other windows,
+menus and panels stay on top of it.
+
+The overlay is shown before the first frame is censored, so the window is never visible uncensored. Like live mode, the
+censored image lags slightly behind the window (the time it takes to censor a frame), which you notice when
+scrolling. Menus, dropdowns and tooltips of the censored window are separate windows and are not censored.
+
+A tray icon has *Select another window*, *Reload configs* and *Quit*; without a system tray, stop it with Ctrl+C.
+Overlay mode stops when the censored window is closed. It uses the same `config.yml` settings as live mode
+(`live_input_size`, `live_frames_in_flight`, `live_show_fps`); the capture region `live_cap_*` is not used.
+
+Overlay mode works on Linux with an X11 session and a compositing window manager. It has been tested on Cinnamon
+(Linux Mint); Wayland, Windows and macOS are not supported yet.
+
 ### HTTP server
 
 ```
@@ -268,6 +293,7 @@ The endpoints and their request and response formats are described in [docs/http
 | | `--vcam` | off | Output to a virtual camera instead of a window. |
 | | `--vcam-w`, `--vcam-h` | `1920`, `1080` | Virtual camera size. |
 | | `--vcam-fps` | `10` | Virtual camera frame rate. |
+| Overlay | `--window` | click | X11 id of the window to censor, in hex (`0x3a00007`) or decimal. |
 | Server | `--host` | `localhost` | Address to listen on. Use `0.0.0.0` to accept connections from other devices. |
 | | `--port` | `8443` | Port to listen on. |
 | | `--ssl` | off | Use HTTPS. |
