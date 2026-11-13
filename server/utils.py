@@ -2,9 +2,14 @@ import cv2
 import numpy as np
 
 
-def bytes_to_np(image_bytes: bytes) -> np.ndarray:
+def bytes_to_np(image_bytes: bytes) -> np.ndarray | None:
+    """
+    Decode an image to 8-bit BGR, the only format the censor backends take: grayscale becomes BGR, an alpha
+    channel is dropped, 16-bit is scaled down, and the EXIF orientation is applied (as the browser shows it).
+    None if the bytes are not a supported image.
+    """
     np_data = np.frombuffer(image_bytes, np.uint8)
-    return cv2.imdecode(np_data, cv2.IMREAD_UNCHANGED)
+    return cv2.imdecode(np_data, cv2.IMREAD_COLOR)
 
 def np_to_bytes(np_image: np.ndarray, ext: str, quality: int | None = None) -> bytes:
     """
