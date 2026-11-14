@@ -2,7 +2,7 @@
 
 Which backend runs, which models it loads and where they run. `pipeline.yml` is only read at startup.
 
-Relative model paths are relative to the working directory (see [Instances](../README.md#instances)).
+Relative model paths are relative to the working directory (see [Instances](profiles.md#instances)).
 
 ```yaml
 backend: python
@@ -23,7 +23,7 @@ models:
 
 | Key                   | Default  | Description |
 |-----------------------|----------|-------------|
-| `backend`             | `python` | `python` or `cpp`. See [Backends](../README.md#backends). |
+| `backend`             | `python` | `python` or `cpp`. See [Backends](backends.md). |
 | `device`              | `cpu`    | Where the models run: `cpu`, `cuda` (first GPU) or `cuda:N`. Default for every model; a model can set its own `device`. |
 | `threads`             | `auto`   | ONNX Runtime CPU threads per model: a number, or `auto` (the CPU models split the cores; a GPU model uses one). |
 | `n_workers`           | `4`      | Worker threads that process images. |

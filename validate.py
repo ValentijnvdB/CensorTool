@@ -330,7 +330,7 @@ def check_profile(ctx: Context) -> str:
         ctx.config_path, ctx.censor_config_path, ctx.pipeline_path = resolve_profile_files(
             profile_dir, ctx.config_file, ctx.censor_config_file, ctx.pipeline_file)
     except ProfileError as e:
-        raise Fail(str(e), "Check --profile, or create the profile in configs/ (see README, Profiles).") from None
+        raise Fail(str(e), "Check --profile, or create the profile in configs/ (see docs/profiles.md).") from None
     ctx.profile_dir = profile_dir
     def short(path: Path) -> str:
         path = Path(path).absolute()
@@ -384,7 +384,7 @@ def check_models(ctx: Context) -> str:
             found.append(f"{name} ({Path(entry['path']).stat().st_size / 2 ** 20:.0f} MB)")
     if missing:
         raise Fail(f"model files not found: {'; '.join(missing)}",
-                   "Download the models (see README, Models). Relative paths are relative to the working directory "
+                   "Download the models (see docs/models.md). Relative paths are relative to the working directory "
                    f"({constants.instance_dir}).")
     return ', '.join(found)
 
@@ -511,7 +511,7 @@ def check_gpu(ctx: Context) -> str:
         if fallback:
             raise Fail(f"pipeline.yml asks for a GPU, but the models run on the CPU: {fallback[0]}",
                        "Install a CUDA build (onnxruntime-gpu, or censor_core with CUDA) with matching CUDA and "
-                       "cuDNN versions (README, GPU), or set 'device: cpu'.")
+                       "cuDNN versions (docs/backends.md, GPU), or set 'device: cpu'.")
         used = [line.strip() for line in ctx.pipeline_output.splitlines() if 'Using CUDA' in line]
         if not used:
             raise Warn(f"pipeline.yml asks for a GPU for {', '.join(gpu_models)}, but it can't be told whether "
@@ -535,7 +535,7 @@ def check_gpu(ctx: Context) -> str:
             raise Warn(f"CUDA is installed but loading '{model.get('name')}' on it failed: {e}") from None
     if 'CUDAExecutionProvider' not in active:
         raise Warn("onnxruntime lists CUDA, but a model can't use it (CUDA or cuDNN libraries missing?)",
-                   "The CUDA and cuDNN versions must match onnxruntime-gpu (README, GPU).")
+                   "The CUDA and cuDNN versions must match onnxruntime-gpu (docs/backends.md, GPU).")
     return "no GPU in pipeline.yml, but CUDA works: set 'device: cuda' in pipeline.yml to use it"
 
 
@@ -895,7 +895,7 @@ def check_https_cert(ctx: Context) -> str:
     for name, path in (('certificate', ctx.ssl_cert), ('key', ctx.ssl_key)):
         if not Path(path).is_file():
             raise Fail(f"{name} not found at {path}",
-                       "Create one (README, HTTPS), or pass --ssl-cert and --ssl-key.")
+                       "Create one (docs/modes/http.md, HTTPS), or pass --ssl-cert and --ssl-key.")
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     try:
         context.load_cert_chain(ctx.ssl_cert, ctx.ssl_key)
@@ -907,7 +907,7 @@ def check_https_cert(ctx: Context) -> str:
     except Exception:
         return "certificate and key load"
     if expires < time.time():
-        raise Warn(f"the certificate expired on {not_after}", "Create a new one (README, HTTPS).")
+        raise Warn(f"the certificate expired on {not_after}", "Create a new one (docs/modes/http.md, HTTPS).")
     return f"certificate and key load (valid until {not_after})"
 
 

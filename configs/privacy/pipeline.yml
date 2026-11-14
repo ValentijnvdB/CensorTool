@@ -10,7 +10,7 @@
 # The implementation that runs the models and censors. Only read at startup.
 #   python: pure Python, works out of the box (default)
 #   cpp:    the C++ censor_core module, noticeably faster (mainly for live and video censoring).
-#           It has to be installed separately, see the README
+#           It has to be installed separately, see docs/backends.md
 # Both give the same results and use the same config files.
 backend: python
 

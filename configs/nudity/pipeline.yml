@@ -9,7 +9,7 @@
 # The implementation that runs the models and censors. Only read at startup.
 #   python: pure Python, works out of the box (default)
 #   cpp:    the C++ censor_core module, noticeably faster (mainly for live and video censoring).
-#           It has to be installed separately, see the README
+#           It has to be installed separately, see docs/backends.md
 # Both give the same results and use the same config files.
 backend: python
 
@@ -46,7 +46,7 @@ models:
 
   #### Body segmentation (optional): adds the BODY label, for full-body censoring and clip_to: [BODY].
   #### Only runs when the censor config needs BODY. Any YOLO segmentation model works;
-  #### (n)ano is the fastest, (x) the most accurate. See the README for how to get one.
+  #### (n)ano is the fastest, (x) the most accurate. See docs/models.md for how to get one.
   # - name: people
   #   path: models/yolo/yolo26n-seg.onnx
   #   resize: stretch
