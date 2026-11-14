@@ -174,7 +174,7 @@ def _resolved_pipeline_file(path: Path | str) -> Path:
     for key in PIPELINE_RUNTIME_KEYS:
         spec.pop(key, None)
     content = yaml.safe_dump(spec, sort_keys=False)
-    out = constants.configs_path / f"pipeline_{hash_utils.hash_bytes(content.encode(), 16)}.yml"
+    out = constants.temp_path / 'configs' / f"pipeline_{hash_utils.hash_bytes(content.encode(), 16)}.yml"
     if not out.exists():
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(content)
