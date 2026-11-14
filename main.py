@@ -135,6 +135,45 @@ def window_id_arg(value: str) -> int:
         raise argparse.ArgumentTypeError(f"not a window id: {value!r} (use e.g. 0x3a00007)") from None
 
 
+def modes_arg(value: str) -> tuple[str, ...]:
+    """A comma separated list of modes for validate --only."""
+    from validate import MODES
+    modes = tuple(dict.fromkeys(m.strip() for m in value.split(',') if m.strip()))
+    unknown = [m for m in modes if m not in MODES]
+    if unknown or not modes:
+        raise argparse.ArgumentTypeError(f"unknown mode(s) {', '.join(unknown) or value!r}; "
+                                         f"choose from {', '.join(MODES)}")
+    return modes
+
+
+def setup_logging(debug: bool):
+    # Remove the default stderr handler
+    logger.remove()
+    log_format = "{time} | {level} | {message}"
+
+    # Console handler - level depends on debug flag
+    console_level = "DEBUG" if debug else "INFO"
+    logger.add(sys.stderr, level=console_level, format=_defaults.LOGURU_FORMAT)
+
+    # File handler - always logs DEBUG
+    logger.add(constants.log_path / 'log.txt', format=log_format, level='DEBUG', rotation='10 MB')
+
+
+def run_validate(args, argv: list[str]):
+    """The validate mode. It loads the profile itself, so a broken profile is reported instead of stopping it."""
+    import validate
+    setup_logging(args.debug)
+    init.init_dirs(Path(args.input), Path(args.output))
+    if args.all_profiles:
+        sys.exit(validate.validate_all_profiles(argv))
+    profile = args.profile if args.profile is not None else select_profile()
+    sys.exit(validate.validate_install(
+        profile=profile, modes=args.only or validate.MODES, quick=args.quick,
+        config_file=args.config, censor_config_file=args.censor_config, pipeline_file=args.pipeline,
+        camera=max(args.device, 0), host=args.host, port=args.port, use_ssl=args.ssl,
+        ssl_cert=args.ssl_cert, ssl_key=args.ssl_key))
+
+
 def split_command(argv: list[str]) -> tuple[list[str], list[str] | None]:
     """Split the arguments at the first '--': (CensorTool's arguments, the command after it or None)."""
     if '--' not in argv:
@@ -171,11 +210,13 @@ def select_profile() -> str:
 
 def get_mode_overview():
     return (
-        "'file': censor images and videos from file."
+        "'file': censor images and videos from file. "
         "'live': real time censoring. "
         "'webcam': real time webcam censoring. "
         "'overlay': censor windows in place (Linux/X11; Windows untested). "
-        "'http: start the http server."
+        "'http': start the http server. "
+        "'init': create the data folders. "
+        "'validate': check which modes work on this machine."
     )
 
 
@@ -235,6 +276,16 @@ def main():
     server_parser.add_argument('--ssl-key', default=str(Path('certs') / 'key.pem'), type=str,
                                help='Path to key file.')
 
+    # validate mode
+    validate_parser = parser.add_argument_group(title='Validate arguments')
+    validate_parser.add_argument('--only', default=None, type=modes_arg, metavar='MODES',
+                                 help="Only check these modes, comma separated: file, live, webcam, overlay, http "
+                                      "(the profile, models and pipeline are always checked).")
+    validate_parser.add_argument('--quick', action='store_true',
+                                 help='Skip the slow checks (videos, GIFs and starting the HTTP server).')
+    validate_parser.add_argument('--all-profiles', action='store_true',
+                                 help='Check every profile in configs/ instead of one.')
+
     parser.usage = '%(prog)s mode [options] [-- command ...]'
     parser.epilog = ("overlay mode: everything after -- is a program to start and censor, e.g. "
                      "'python main.py overlay -- celluloid --new-window video.mp4'.")
@@ -251,6 +302,13 @@ def main():
         parser.error("--curtain needs a command after --")
     if args.auto is not None and args.mode != 'overlay':
         parser.error("--auto can only be used with overlay mode")
+    if args.mode != 'validate' and (args.only is not None or args.quick or args.all_profiles):
+        parser.error("--only, --quick and --all-profiles can only be used with validate mode")
+    if args.all_profiles and args.profile is not None:
+        parser.error("use either --profile or --all-profiles, not both")
+
+    if args.mode == 'validate':
+        run_validate(args, argv)
 
     # Initialize the censor app
     profile = args.profile if args.profile is not None else select_profile()
@@ -261,16 +319,7 @@ def main():
     except ProfileError as e:
         parser.error(str(e))
 
-    # Remove the default stderr handler
-    logger.remove()
-    log_format = "{time} | {level} | {message}"
-
-    # Console handler - level depends on debug flag
-    console_level = "DEBUG" if args.debug else "INFO"
-    logger.add(sys.stderr, level=console_level, format=_defaults.LOGURU_FORMAT)
-
-    # File handler - always logs DEBUG
-    logger.add(constants.log_path / 'log.txt', format=log_format, level='DEBUG', rotation='10 MB')
+    setup_logging(args.debug)
 
     input_path = Path(args.input)
     output_path = Path(args.output)
@@ -280,10 +329,6 @@ def main():
     ############ Start the correct mode ############
     if args.mode in ['init']:
         pass  # already created all dirs above
-
-    if args.mode in ['validate']:
-        from validate import validate_install
-        validate_install()
 
     elif args.mode in ['live']:
         if args.device != -1:

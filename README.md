@@ -95,8 +95,9 @@ The censored images appear in `data/censored/`.
     ```
     python main.py validate
     ```
-   This loads the models on the CPU and the GPU and tests the screen capture and the virtual camera, then prints
-   which modes should work.
+   This loads the profile's models, censors test images, videos and GIFs, starts the HTTP server and tries the
+   screen capture, webcam, overlay and virtual camera, then prints which modes should work. See
+   [Checking what works](#checking-what-works).
 
 Optionally, install the faster [C++ backend](#backends).
 
@@ -316,6 +317,30 @@ startup; a request can send its own censor config. This is what
 
 The endpoints and their request and response formats are described in [docs/http_api.md](docs/http_api.md).
 
+### Checking what works
+
+```
+python main.py validate [--profile <name> | --all-profiles] [--only file,live,webcam,overlay,http] [--quick]
+```
+
+Runs the checks of every mode with a profile and prints `PASS`, `WARN`, `FAIL` or `SKIP` for each check with a
+hint on how to fix it, then a verdict per mode ("should work", "NOT WORKING: <reason>" or "not tested: <reason>",
+e.g. without a camera). The profile, the models and the censoring pipeline are always checked; per mode:
+
+| Mode | Checks |
+|------|--------|
+| `file` | Every image type from file to file, `ffmpeg`/`ffprobe`, a test video with sound and a GIF. |
+| `live` | Capturing the `live_cap_*` region (it must be on a screen) and OpenCV window support. |
+| `webcam` | Reading a frame from camera `--device` (default 0). |
+| `overlay` | The window system, and capturing the focused window. |
+| `http` | `--host`/`--port` are free, the `--ssl` certificate loads, and a real server answers `/health`, `/profile` and `/censor_image`. |
+
+Optional extras are reported separately and never make a mode fail: whether the GPU is really used (with
+`device: cuda`; both backends fall back to the CPU silently) or would work, and the virtual camera (`--vcam`).
+ComfyUI and the stickers are only checked when the censor config uses them. `--quick` skips the slow checks
+(videos, GIFs and the server). `--all-profiles` checks every profile in `configs/`, each in its own process.
+Test files go to a temporary folder; nothing in `data/` is changed. The exit code is 1 when a check failed.
+
 ### Arguments
 
 | Group | Argument | Default | Description |
@@ -344,6 +369,9 @@ The endpoints and their request and response formats are described in [docs/http
 | | `--port` | `8443` | Port to listen on. |
 | | `--ssl` | off | Use HTTPS. |
 | | `--ssl-cert`, `--ssl-key` | `certs/cert.pem`, `certs/key.pem` | Certificate and key for HTTPS. |
+| Validate | `--only MODES` | all | Only check these modes, comma separated (`file,live,webcam,overlay,http`). |
+| | `--quick` | off | Skip the slow checks (videos, GIFs, starting the server). |
+| | `--all-profiles` | off | Check every profile instead of one. |
 
 ### Folders
 

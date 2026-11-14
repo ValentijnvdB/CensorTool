@@ -174,15 +174,17 @@ class ConfigCheck:
         return not self.errors
 
 
-def _pipeline_errors(parsed, warnings: list[str]) -> list[str]:
+def pipeline_errors(parsed, warnings: list[str], pipeline=None) -> list[str]:
     """
-    Checks a parsed censor config against the loaded models: unknown labels are warnings; clip_to targets that no
-    model produces, and shape MASK or clip_to on a detect model, are errors.
+    Checks a parsed censor config against the models of a pipeline (the server's one by default): unknown labels
+    are warnings; clip_to targets that no model produces, and shape MASK or clip_to on a detect model, are errors.
     """
-    if _image_pipeline is None:
+    if pipeline is None:
+        pipeline = _image_pipeline
+    if pipeline is None:
         return []
-    labels = dict(_image_pipeline.labels)
-    graph = _image_pipeline.graph
+    labels = dict(pipeline.labels)
+    graph = pipeline.graph
 
     def is_segmentation(label: str) -> bool:
         return bool(graph.stage(labels[label]).polygons)
@@ -222,7 +224,7 @@ def inspect_censor_config(config: Any) -> ConfigCheck:
             parsed = censor_config_from_dict(checked)  # same format for both backends
         except Exception as e:
             return ConfigCheck(None, [f"Invalid censor config: {e}"], list(warnings), INVALID_CONFIG)
-    errors = _pipeline_errors(parsed, warnings)
+    errors = pipeline_errors(parsed, warnings)
     if errors:
         return ConfigCheck(None, errors, warnings, INVALID_CONFIG)
     return ConfigCheck(checked, [], warnings)
