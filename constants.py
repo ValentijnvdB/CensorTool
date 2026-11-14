@@ -22,7 +22,6 @@ stickers_root_path = data_root / 'stickers'
 debug_path = data_root / 'debug'
 assets_path = install_dir / 'data' / 'assets'  # ships with the program
 temp_path = data_root / 'temp'
-configs_path = temp_path / 'configs'
 log_path = data_root / 'logs'
 
 init_screen_image = assets_path / 'init_screen.png'

@@ -1,13 +1,13 @@
 import argparse
 import sys
 import time
-from os import makedirs
 from pathlib import Path
 from typing import Literal
 
 from loguru import logger, _defaults
 
 import constants
+import init
 from app import init_app
 from app.config import ProfileError
 
@@ -110,20 +110,6 @@ def censor_files(input_path: Path, output_path: Path, recursive: bool, **kwargs)
     total_ms = (stop_time - start_time) / 1000000
     time_str = format_time(total_ms)
     logger.info(f"Took {time_str} to censor {len(images) + len(videos)} files.")
-
-
-def create_dirs():
-    makedirs(constants.video_cache_path, exist_ok=True)
-    makedirs(constants.image_cache_path, exist_ok=True)
-    makedirs(constants.trash_bin_cache_path, exist_ok=True)
-
-    makedirs(constants.censored_path, exist_ok=True)
-    makedirs(constants.debug_path, exist_ok=True)
-    makedirs(constants.stickers_root_path, exist_ok=True)
-    makedirs(constants.uncensored_path, exist_ok=True)
-    makedirs(constants.configs_path, exist_ok=True)
-
-    makedirs(constants.model_root, exist_ok=True)
 
 
 def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_height, vcam_fps:int, censor_config: Path|str):
@@ -265,7 +251,6 @@ def main():
         parser.error("--curtain needs a command after --")
     if args.auto is not None and args.mode != 'overlay':
         parser.error("--auto can only be used with overlay mode")
-    create_dirs()
 
     # Initialize the censor app
     profile = args.profile if args.profile is not None else select_profile()
@@ -289,11 +274,12 @@ def main():
 
     input_path = Path(args.input)
     output_path = Path(args.output)
-    output_path.mkdir(parents=True, exist_ok=True)
+
+    init.init_dirs(input_path, output_path)
 
     ############ Start the correct mode ############
     if args.mode in ['init']:
-        logger.info("Setting up directories.")
+        pass  # already created all dirs above
 
     if args.mode in ['validate']:
         from validate import validate_install
