@@ -84,6 +84,10 @@ class Display(ABC):
         :raises ValueError: if there is no such window.
         """
 
+    @abstractmethod
+    def active_window(self) -> int | None:
+        """The window that has the focus, or None."""
+
 
 class WindowMonitor(ABC):
     """Waits for windows to appear, disappear or change. Use from one thread only."""

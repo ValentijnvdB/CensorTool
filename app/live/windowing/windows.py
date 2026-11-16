@@ -330,6 +330,12 @@ class WinDisplay(Display):
             raise ValueError(f"There is no window with id {win:#x}.")
         return _int(self.a.user32.GetAncestor(win, GA_ROOT)) or win
 
+    def active_window(self) -> int | None:
+        hwnd = _int(self.a.user32.GetForegroundWindow())
+        if hwnd:
+            hwnd = _int(self.a.user32.GetAncestor(hwnd, GA_ROOT)) or hwnd
+        return hwnd or None
+
 
 class WinMonitor(WindowMonitor):
     """

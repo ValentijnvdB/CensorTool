@@ -765,6 +765,9 @@ class X11Display(Display):
         client = self.conn.client_of(self.conn.toplevel(win))
         return win if client is None or win == client else client
 
+    def active_window(self) -> int | None:
+        return self.conn.active_window()
+
 
 class X11Monitor(WindowMonitor):
     """

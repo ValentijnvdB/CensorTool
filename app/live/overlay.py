@@ -84,13 +84,34 @@ def _resolve_target(window_id: int) -> int:
         return display.application_window(window_id)
 
 
+def _focused_target(delay: float) -> int:
+    """
+    The focused application window, after waiting delay seconds.
+
+    :raises ValueError: if no application window has the focus (e.g. the desktop or a panel).
+    """
+    if delay > 0:
+        print(f"Censoring the focused window in {delay:g} s: switch to it now.")
+        time.sleep(delay)
+    with _display() as display:
+        window = display.active_window()
+        if window is None:
+            raise ValueError("No window has the focus.")
+        window = display.application_window(window)
+        if not display.is_app_window(window) or display.window_info(window).panel:
+            raise ValueError(f"The focused window ({window:#x}) is not an application window (the desktop or a "
+                             f"panel?).")
+        logger.info(f"Censoring the focused window {window:#x}: {display.title(window)!r}")
+        return window
+
+
 # seconds a started program gets to open its window
 LAUNCH_TIMEOUT = 30
 
 
 def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Path | str | None = None,
                          command: list[str] | None = None, curtain: bool = False,
-                         auto: list[str] | None = None):
+                         auto: list[str] | None = None, focused: float | None = None):
     """
     Start overlay mode.
 
@@ -100,7 +121,11 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
     :param curtain: with command: cover the screens until the program's window is covered by the overlay.
     :param auto: start in auto mode, with these programs in addition to overlay_auto_programs in config.yml.
         None: auto mode is off (it can be switched on from the tray).
+    :param focused: censor the window that has the focus after waiting this many seconds (0: right away).
+        None: not used. Not combinable with window_ids or command.
     """
+    if focused is not None and (window_ids or command):
+        raise ValueError("The focused window can't be combined with window ids or a command.")
     problem = windowing.session_problem()
     if problem:
         raise RuntimeError(problem)
@@ -128,6 +153,8 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
             targets = [started.window]
         elif window_ids:
             targets = list(dict.fromkeys(_resolve_target(w) for w in window_ids))
+        elif focused is not None:
+            targets = [_focused_target(focused)]
         elif auto is not None:
             targets = []  # auto mode finds the windows
         else:
@@ -148,9 +175,9 @@ def start_overlay_censor(window_ids: list[int] | None = None, censor_config: Pat
             curtain_widget.close()
         raise
 
-    # started with --window or a command: stop when those windows are closed. Picked or auto mode: keep running in
-    # the tray.
-    quit_when_empty = bool(command or window_ids) and auto is None
+    # started with --window, --focused or a command: stop when those windows are closed. Picked or auto mode: keep
+    # running in the tray.
+    quit_when_empty = bool(command or window_ids or focused is not None) and auto is None
     OverlayApp(targets, censor_config, curtain=curtain_widget, started=started,
                quit_when_empty=quit_when_empty, auto=auto).run()
 

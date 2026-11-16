@@ -118,10 +118,11 @@ def start_live_censor(device_id: int, use_vcam: bool, vcam_width: int, vcam_heig
 
 
 def start_overlay_censor(window_ids: list[int] | None, censor_config: Path | str, command: list[str] | None,
-                         curtain: bool, auto: list[str] | None):
+                         curtain: bool, auto: list[str] | None, focused: float | None = None):
     from app.live.overlay import start_overlay_censor
     try:
-        start_overlay_censor(window_ids, censor_config, command=command, curtain=curtain, auto=auto)
+        start_overlay_censor(window_ids, censor_config, command=command, curtain=curtain, auto=auto,
+                             focused=focused)
     except (RuntimeError, ValueError) as e:
         logger.error(str(e))
         sys.exit(1)
@@ -133,6 +134,17 @@ def window_id_arg(value: str) -> int:
         return int(value, 0)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a window id: {value!r} (use e.g. 0x3a00007)") from None
+
+
+def delay_arg(value: str) -> float:
+    """A delay in seconds, 0 or more."""
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = -1
+    if not seconds >= 0 or seconds == float('inf'):
+        raise argparse.ArgumentTypeError(f"not a delay in seconds: {value!r}")
+    return seconds
 
 
 def modes_arg(value: str) -> tuple[str, ...]:
@@ -252,6 +264,9 @@ def main():
     overlay_parser.add_argument('--auto', nargs='*', action='extend', default=None, metavar='PROGRAM',
                                 help='Auto mode: censor every window of the programs in overlay_auto_programs '
                                      '(config.yml) and of the programs given here (e.g. --auto celluloid mpv).')
+    overlay_parser.add_argument('--focused', nargs='?', const=0.0, default=None, type=delay_arg, metavar='SECONDS',
+                                help='Censor the window that has the focus, after waiting SECONDS (default 0). For '
+                                     'starting overlay mode from a shortcut or another program.')
     overlay_parser.add_argument('--curtain', action='store_true',
                                 help='With a command after --: cover the screens while the program starts, so its '
                                      'window is never visible uncensored.')
@@ -298,10 +313,17 @@ def main():
             parser.error("no command after --")
         if args.window is not None:
             parser.error("use either --window or a command after --, not both")
+        if args.focused is not None:
+            parser.error("use either --focused or a command after --, not both")
     elif args.curtain:
         parser.error("--curtain needs a command after --")
     if args.auto is not None and args.mode != 'overlay':
         parser.error("--auto can only be used with overlay mode")
+    if args.focused is not None:
+        if args.mode != 'overlay':
+            parser.error("--focused can only be used with overlay mode")
+        if args.window is not None:
+            parser.error("use either --window or --focused, not both")
     if args.mode != 'validate' and (args.only is not None or args.quick or args.all_profiles):
         parser.error("--only, --quick and --all-profiles can only be used with validate mode")
     if args.all_profiles and args.profile is not None:
@@ -356,7 +378,7 @@ def main():
 
     elif args.mode in ['overlay']:
         start_overlay_censor(window_ids=args.window, censor_config=args.censor_config, command=command,
-                             curtain=args.curtain, auto=args.auto)
+                             curtain=args.curtain, auto=args.auto, focused=args.focused)
 
     elif args.mode in ['f', 'file', 'files']:
         censor_files(

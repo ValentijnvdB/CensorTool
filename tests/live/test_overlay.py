@@ -158,3 +158,87 @@ class TestWindowIdArgument:
     def test_invalid(self):
         with pytest.raises(argparse.ArgumentTypeError):
             main.window_id_arg('firefox')
+
+
+class TestDelayArgument:
+
+    @pytest.mark.parametrize('value, expected', [('0', 0.0), ('2.5', 2.5)])
+    def test_valid(self, value, expected):
+        assert main.delay_arg(value) == expected
+
+    @pytest.mark.parametrize('value', ['-1', 'soon', 'nan', 'inf'])
+    def test_invalid(self, value):
+        with pytest.raises(argparse.ArgumentTypeError):
+            main.delay_arg(value)
+
+
+class FakeDisplay:
+    def __init__(self, active, app_window=True, panel=False):
+        self.active, self.app_window, self.panel = active, app_window, panel
+
+    def active_window(self):
+        return self.active
+
+    def application_window(self, win):
+        return win
+
+    def is_app_window(self, win):
+        return self.app_window
+
+    def window_info(self, win):
+        return SimpleNamespace(panel=self.panel)
+
+    def title(self, win):
+        return 'Video'
+
+    def close(self):
+        pass
+
+
+class TestFocusedTarget:
+
+    @pytest.fixture
+    def use_display(self, monkeypatch):
+        from app.live import overlay
+
+        def use(display):
+            monkeypatch.setattr(windowing, 'get', lambda: SimpleNamespace(open_display=lambda: display))
+            return overlay
+        return use
+
+    def test_focused_window(self, use_display):
+        assert use_display(FakeDisplay(0x3a00007))._focused_target(0) == 0x3a00007
+
+    def test_waits_first(self, use_display, monkeypatch):
+        overlay = use_display(FakeDisplay(0x3a00007))
+        slept = []
+        monkeypatch.setattr(overlay.time, 'sleep', slept.append)
+        overlay._focused_target(1.5)
+        assert slept == [1.5]
+
+    @pytest.mark.parametrize('display', [FakeDisplay(None), FakeDisplay(0x10, panel=True),
+                                         FakeDisplay(0x10, app_window=False)])
+    def test_no_application_window_focused(self, use_display, display):
+        with pytest.raises(ValueError):
+            use_display(display)._focused_target(0)
+
+    def test_not_with_window_ids_or_command(self, use_display):
+        overlay = use_display(FakeDisplay(0x10))
+        with pytest.raises(ValueError):
+            overlay.start_overlay_censor(window_ids=[0x10], focused=0)
+        with pytest.raises(ValueError):
+            overlay.start_overlay_censor(command=['mpv'], focused=0)
+
+
+class TestFocusedCommandLine:
+
+    @pytest.mark.parametrize('argv', [
+        ['file', '--focused'],
+        ['overlay', '--focused', '--window', '0x10'],
+        ['overlay', '--focused', '--', 'mpv'],
+    ])
+    def test_refused(self, argv, monkeypatch):
+        monkeypatch.setattr('sys.argv', ['main.py', *argv])
+        with pytest.raises(SystemExit) as e:
+            main.main()
+        assert e.value.code == 2
